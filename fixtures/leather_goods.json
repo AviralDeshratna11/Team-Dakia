@@ -1,0 +1,5 @@
+{
+  "text": "Find three leather-goods manufacturers in Uttar Pradesh and draft an RFQ to each",
+  "request_type": "shortlist", "category": "leather_goods", "destination": "Bengaluru, India",
+  "research_budget_minor": 200000, "approval_threshold_minor": 0, "mode": "fixture", "scenario": "normal"
+}

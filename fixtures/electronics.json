@@ -1,0 +1,5 @@
+{
+  "text": "Source ESP32-S3 modules, 3.3V 500mA SOT-23 LDO regulators, 10uF 0805 capacitors and USB-C connectors; 500 of each",
+  "request_type": "purchase", "category": "electronics", "destination": "Bengaluru, India",
+  "research_budget_minor": 200000, "approval_threshold_minor": 100000000, "mode": "fixture", "scenario": "missing_stock"
+}

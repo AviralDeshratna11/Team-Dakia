@@ -1,0 +1,14 @@
+{
+  "electronics": [
+    {"id":"bright", "canonical_id":"fixture-company-bright", "name":"Bright Circuit Supply", "aliases":["Bright Circuit India"], "domain":"bright.example.invalid", "locations":["Bengaluru, India"], "kind":"distributor", "identity":"resolved", "multiplier":100, "signals":{"authorized":true,"stable":true,"complaints_clear":true}},
+    {"id":"bright-alias", "canonical_id":"fixture-company-bright", "name":"Bright Circuit India", "aliases":[], "domain":"bright.example.invalid", "locations":["Bengaluru, India"], "kind":"distributor", "identity":"resolved", "multiplier":100, "signals":{"authorized":true,"stable":true,"complaints_clear":true}},
+    {"id":"steady", "canonical_id":"fixture-company-steady", "name":"Steady Components", "aliases":[], "domain":"steady.example.invalid", "locations":["Delhi, India"], "kind":"manufacturer", "identity":"resolved", "multiplier":125, "signals":{"authorized":true,"stable":true,"complaints_clear":true}},
+    {"id":"cheap", "canonical_id":null, "name":"Budget Parts Storefront", "aliases":[], "domain":"budget.example.invalid", "locations":["Unknown"], "kind":"unknown", "identity":"unverified", "multiplier":40, "signals":{"authorized":null,"stable":null,"complaints_clear":null}}
+  ],
+  "leather_goods": [
+    {"id":"kanpur", "canonical_id":"fixture-company-kanpur", "name":"Kanpur Leather Works", "aliases":[], "domain":"kanpur.example.invalid", "locations":["Kanpur, Uttar Pradesh, India"], "kind":"manufacturer", "identity":"resolved", "multiplier":100, "signals":{"factory":true,"stable":true,"complaints_clear":true}},
+    {"id":"agra", "canonical_id":"fixture-company-agra", "name":"Agra Artisan Manufacturing", "aliases":[], "domain":"agra.example.invalid", "locations":["Agra, Uttar Pradesh, India"], "kind":"manufacturer", "identity":"resolved", "multiplier":110, "signals":{"factory":true,"stable":true,"complaints_clear":true}},
+    {"id":"noida", "canonical_id":"fixture-company-noida", "name":"Noida Hide Studio", "aliases":[], "domain":"noida.example.invalid", "locations":["Noida, Uttar Pradesh, India"], "kind":"manufacturer", "identity":"resolved", "multiplier":120, "signals":{"factory":true,"stable":true,"complaints_clear":true}},
+    {"id":"trader", "canonical_id":"fixture-company-trader", "name":"UP Leather Trading", "aliases":[], "domain":"trader.example.invalid", "locations":["Kanpur, Uttar Pradesh, India"], "kind":"trader", "identity":"resolved", "multiplier":50, "signals":{"factory":false,"stable":true,"complaints_clear":true}}
+  ]
+}
