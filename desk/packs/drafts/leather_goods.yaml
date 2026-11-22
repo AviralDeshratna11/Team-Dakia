@@ -1,0 +1,116 @@
+# DRAFT pack written by the pack_drafter agent. Review, then approve:
+#   python -m desk pack approve leather_goods
+name: leather_goods
+draft: true
+confidence: low
+drafted_from: We need 300 full-grain leather laptop sleeves, 15-inch, black, with
+  our logo debossed. Find three leather-goods manufacturers in Uttar Pradesh, check
+  each is real and active, and send each a request for quote. Deliver to Bengaluru
+  within 6 weeks.
+summary: Sourcing full-grain leather laptop sleeves, 15-inch, black, with debossed
+  logo.
+sources:
+- https://www.google.com/goto?url=CAEShwEBxCJF11ZhCGDa_Z6ryPhDyvx-ZAYgSl5ePxMOHgrE2H--ue-6G-n2_L1dUBxWavazdlWw9SQOaQC27HX_V4kC2LPPdS3isN4JO_rbX437PUpjjcjFu4-wKSFRYuAZC3EM1M9uSuC8ksdfW8RlGzMCvoU7m2JfxxiNQ3Tzhy8py3ukTdWaM6g&gsessionid=1rMXWZIhLAPUH2-IesZyq3zzNS9uuMWGKjK91rVBLLDqmtZIFOMoXg
+- https://www.msassociates.pro/gst/gst-leather-sector.php
+- https://www.linkedin.com/pulse/gst-reforms-turning-point-indias-leather-footwear-ray-chaudhuri-xtfef
+- https://www.google.com/goto?url=CAEScQHEIkXXhoVlFWEg7fgpYbOlsBCkMALssmWDuaz7P6_dgPgO3SC1gAW4wlfgbVju_YfRbRL7hW5u5_kwc-8GHl_h4ErJf1kyOsOh6V_KqeiUeGIT8S0NRzzPA6d1SWpum5bTSPQm7CJJEDhqIrGlttBo&gsessionid=1rMXWZIhLAPUH2-IesZyq3zzNS9uuMWGKjK91rVBLLDqmtZIFOMoXg
+spec_hint: Full-grain leather laptop sleeves, 15-inch, black, with debossed logo.
+fx_to_inr:
+  INR: 1.0
+  USD: 88.0
+  JPY: 0.57
+find_mode: company_search
+company_search:
+  query: leather goods manufacturer Uttar Pradesh
+  country: India
+  max_companies: 5
+distributors: []
+ordering: rfq
+rfq:
+  max_vendors: 3
+  questions:
+  - What grade of full-grain leather do you use? Can you provide samples of the leather?
+  - What finishing options are available for the leather (e.g., matte, glossy, distressed)?
+  - Can you produce laptop sleeves for 15-inch laptops? Do you offer custom sizing?
+  - What are your capabilities for debossing logos? Can you provide examples of previous
+    debossed work?
+  - What is the cost and lead time for a pre-production sample with our debossed logo?
+  - What is your Minimum Order Quantity for custom laptop sleeves?
+  - What is the estimated production lead time for an order of 300 units?
+  - What are your standard packaging options? Can you accommodate custom packaging
+    requirements?
+  - Do you offer delivery to Bengaluru, India? What are the shipping costs and timelines?
+trust_signals:
+- Professional website with product catalogs and company information.
+- Evidence of manufacturing facility (photos/videos).
+- Relevant quality certifications (e.g., ISO, Leather Working Group).
+- Client testimonials or references.
+- Clear and verifiable factory address and contact information.
+- Willingness to provide samples.
+- Verifiable business registration and years in business.
+typical_moq: null
+investigate:
+  leads_per_part: 0
+unknown_vendor:
+  ships_from: IN
+  transit_days: 7
+  shipping_inr: 1500
+  free_shipping_over_inr: null
+reliability:
+  min_identify_confidence: 0.8
+  min_age_years: 3
+  min_headcount: 20
+  min_headcount_yoy_pct: -20
+  min_monthly_visitors: 10000
+  min_score: 0.5
+  weights:
+    real_company: 3
+    age: 1
+    size: 1
+    growth: 1
+landed_cost:
+  destination_country: IN
+  import_duty_rate: 0.0
+  gst_rate: 0.18
+  placeholder_rates: true
+factory_signal:
+  weight: 2
+  max_people: 5
+  factory_keywords:
+  - operator
+  - machine
+  - production
+  - stitch
+  - tailor
+  - cutting
+  - quality
+  - qc
+  - supervisor
+  - factory
+  - plant
+  - karigar
+  - tannery
+  - technician
+  - maintenance
+  - manufactur
+  trader_keywords:
+  - sales
+  - business development
+  - export
+  - merchandis
+  - marketing
+  - trader
+  - trading
+  - sourcing
+  - account manager
+  contact_keywords:
+  - sales
+  - export
+  - business development
+  - marketing
+  - proprietor
+  - owner
+  - director
+  - founder
+  - partner
+  - manager

@@ -67,3 +67,9 @@ Thumbs.db
 Desktop.ini
 *.swp
 *.swo
+
+# CLI run traces, provider cache and notebook checkpoints
+/.venv-cli/
+/runs/
+/.cache/
+.ipynb_checkpoints/

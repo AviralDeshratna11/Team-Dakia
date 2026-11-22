@@ -1,0 +1,36 @@
+# Manual mode: lines with hand-picked part numbers skip the LLM in step 1.
+
+
+text: >
+  Here's our BOM: an ESP32-S3 module, a 3.3V LDO regulator (500mA, SOT-23),
+  10µF 0805 capacitors and a USB-C connector. 500 units, delivered to Bengaluru
+  within 3 weeks. Keep data spend under ₹2,000.
+category: electronics
+units: 500
+deliver_to: Bengaluru, India
+deadline: 2026-12-13
+data_budget_inr: 2000
+
+lines:
+  - line_id: mcu
+    description: ESP32-S3 module
+    mpn: ESP32-S3-WROOM-1-N8R8
+    maker: Espressif Systems
+
+  - line_id: ldo
+    description: 3.3V LDO regulator, 500mA, SOT-23
+    mpn: AP2112K-3.3TRG1
+    maker: Diodes Incorporated
+    params: {output_voltage: 3.3V, output_current_min: 500mA, package: SOT-23-5}
+
+  - line_id: cap10u
+    description: 10µF 0805 capacitor
+    mpn: CL21A106KAQNNNE
+    maker: Samsung Electro-Mechanics
+    params: {capacitance: 10uF, package: "0805"}
+    qty_per_unit: 4
+
+  - line_id: usbc
+    description: USB-C connector
+    mpn: TYPE-C-31-M-12
+    maker: Korean Hroparts Elec

@@ -1,0 +1,5 @@
+# The brief's example request, in the founder's own words. Step 1 (Gemini) reads everything from it.
+text: >
+  Here's our BOM: an ESP32-S3 module, a 3.3V LDO regulator (500mA, SOT-23),
+  10µF 0805 capacitors and a USB-C connector. 500 units, delivered to Bengaluru
+  within 3 weeks. Keep data spend under ₹2,000.

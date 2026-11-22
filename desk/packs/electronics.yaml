@@ -1,0 +1,96 @@
+# Category pack: electronics. Everything field-specific lives here, not in code.
+# Values marked PLACEHOLDER are unverified: check them before trusting a landed cost.
+
+name: electronics
+
+# Told to step 1's model: which specs decide whether a part fits.
+spec_hint: >
+  For electronics, use names like output_voltage, output_current, capacitance, voltage_rating,
+  tolerance, dielectric, package (e.g. SOT-23, 0805), connector_type, flash, psram.
+
+# Currency -> INR. PLACEHOLDER rates: set them to the day's rate before the demo.
+fx_to_inr:
+  INR: 1.0
+  USD: 88.0
+  JPY: 0.57
+
+# Known distributors, fetched directly (search can't be restricted to one site; see NOTES.md).
+#   url:            product page, or a keyword URL that redirects to it on an exact match
+#   search_url:     a search page; we follow up to max_products product links from it
+#   company_domain: the company that actually sells, if the storefront domain resolves to something else
+#   authorized:     authorized distributor (the electronics trust signal)
+#   ships_from / transit_days / shipping_inr / free_shipping_over_inr: for landed cost (PLACEHOLDER)
+distributors:
+  - name: DigiKey India
+    domain: digikey.in
+    company_domain: digikey.com   # digikey.in resolves to "DigiKey Global Capability Center" (a back office)
+    extractor: digikey
+    human_mode: true    # plain fetch hits Cloudflare ("Just a moment...") intermittently; same 1 credit
+    url: "https://www.digikey.in/en/products/result?keywords={mpn}"
+    authorized: true
+    ships_to_india: true
+    ships_from: US
+    transit_days: 5               # PLACEHOLDER
+    shipping_inr: 1500            # PLACEHOLDER
+    free_shipping_over_inr: 4000  # PLACEHOLDER
+
+  - name: LCSC
+    domain: lcsc.com
+    extractor: lcsc
+    search_url: "https://www.lcsc.com/search?q={mpn}"
+    max_products: 3
+    authorized: false             # authorized for some makers only; treated as not authorized
+    ships_to_india: true
+    ships_from: CN
+    transit_days: 7               # PLACEHOLDER
+    shipping_inr: 2200            # PLACEHOLDER
+    free_shipping_over_inr: null
+
+  # Blocked as of 2026-11-22 (also in human_mode). Kept so the gap shows up for step 4.
+  - name: Mouser India
+    domain: mouser.in
+    company_domain: mouser.com    # mouser.in has no company record of its own
+    extractor: null
+    url: "https://www.mouser.in/c/?q={mpn}"
+    authorized: true
+    ships_to_india: true
+    ships_from: US
+    transit_days: 5               # PLACEHOLDER
+    shipping_inr: 1500            # PLACEHOLDER
+    free_shipping_over_inr: 4000  # PLACEHOLDER
+
+# One open search per part, to find sellers we don't know. They become leads for step 3.
+discovery:
+  query: "{mpn} buy India"
+  max_leads: 8
+
+# Step 2b: unknown sellers from the open search are investigated by a bounded agent.
+investigate:
+  leads_per_part: 1       # each lead is one agent run (~5 Gemini calls): keep it small
+  skip_if_title_has: [datasheet, wiki, pdf, "data sheet"]
+  max_turns: 8
+  credit_budget: 8        # Crustdata credits per lead
+
+# Landed-cost defaults for sellers the agent found (not in the list above). PLACEHOLDER.
+unknown_vendor:
+  ships_from: unknown     # treated as an import
+  transit_days: 14
+  shipping_inr: 2500
+  free_shipping_over_inr: null
+
+# Step 3: what makes a seller trustworthy. Score = weighted share of signals that passed.
+reliability:
+  min_identify_confidence: 0.8
+  min_age_years: 3
+  min_headcount: 20
+  min_headcount_yoy_pct: -20
+  min_monthly_visitors: 10000
+  min_score: 0.6
+  weights: {real_company: 3, age: 1, size: 1, growth: 1, web_traffic: 1, authorized: 2}
+
+# Step 5: landed cost = goods + shipping + import duty + GST. PLACEHOLDER rates.
+landed_cost:
+  destination_country: IN
+  import_duty_rate: 0.10   # PLACEHOLDER: basic customs duty, varies by HS code
+  gst_rate: 0.18           # PLACEHOLDER: IGST on imports / GST domestic
+  placeholder_rates: true  # set false once the rates above are checked

@@ -1,5 +1,7 @@
 # Sourcing Desk
 
+This repository contains the **web dashboard** (React, FastAPI and its worker) and the **team CLI and notebook** (the `desk` package). They have separate entry points, workflow state and synthetic wallets. Use the dashboard for supplier quote review and the RazorpayX UPI payout preview. Use the CLI to try seller investigation, mock RFQ threads and category pack drafting. See the [CLI setup and workflow](docs/team-cli.md).
+
 ## Test supplier payments
 
 Start the dashboard, API and worker as described below. To exercise checkout without paid provider calls, choose offline fixtures and turn Gemini off. Enter `electronics` as product context and submit the following request.
