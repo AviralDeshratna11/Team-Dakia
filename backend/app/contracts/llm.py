@@ -53,12 +53,12 @@ class SupplierInsight(Contract):
 
 
 class SupplierExtraction(Contract):
-    insights: list[SupplierInsight] = Field(max_length=20)
+    insights: list[SupplierInsight] = Field(max_length=60)
 
 
 class SupplierSearchPlan(Contract):
     search_terms: str = Field(max_length=200)
-    evidence_ids: list[str] = Field(max_length=8)
+    evidence_ids: list[str] = Field(max_length=30)
 
 
 class WebProductPage(Contract):
