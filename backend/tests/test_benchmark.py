@@ -239,7 +239,7 @@ def test_api_endpoint_inventory_and_success_contract(system):
 
     registered = {(method, route.path) for route in app.routes for method in route.methods}
     assert registered == successes.keys()
-    checked_in = json.loads((Path(__file__).resolve().parents[2] / "docs" / "openapi.json").read_text(encoding="utf-8"))
+    checked_in = json.loads((Path(__file__).resolve().parents[2] / "docs" / "api" / "openapi.json").read_text(encoding="utf-8"))
     for document in (schema, checked_in):
         operations = {
             (method.upper(), path): operation["responses"]

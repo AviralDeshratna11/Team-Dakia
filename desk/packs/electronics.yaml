@@ -14,7 +14,7 @@ fx_to_inr:
   USD: 88.0
   JPY: 0.57
 
-# Known distributors, fetched directly (search can't be restricted to one site; see NOTES.md).
+# Known distributors, fetched directly (search can't be restricted to one site; see docs/planning/team-notes.md).
 #   url:            product page, or a keyword URL that redirects to it on an exact match
 #   search_url:     a search page; we follow up to max_products product links from it
 #   company_domain: the company that actually sells, if the storefront domain resolves to something else

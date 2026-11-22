@@ -16,7 +16,7 @@ Gemini update: **45 offline tests pass**, including both LLM stages through the 
 
 Verified locally on 22 November 2026. All test data and payments were synthetic. No deployment, external messages or real payment occurred.
 
-Update after live integration: **27 offline tests pass**, and the regenerated API types plus frontend production build pass. Three actual Crustdata calls returned HTTP 200 and used 2.2 credits, but resolved a Google redirect rather than a supplier. This proves connectivity only. The redirect defect is fixed offline. The new default is a **0.2-credit identity-only cap**, with Search/Fetch blocked before execution; no additional paid call was made after that cap was requested. See `live-test.md` and `live-e2e-result.json` for the detailed result. The table below preserves the original fixture-only verification baseline.
+Update after live integration: **27 offline tests pass**, and the regenerated API types plus frontend production build pass. Three actual Crustdata calls returned HTTP 200 and used 2.2 credits, but resolved a Google redirect rather than a supplier. This proves connectivity only. The redirect defect is fixed offline. The new default is a **0.2-credit identity-only cap**, with Search/Fetch blocked before execution; no additional paid call was made after that cap was requested. See [live test](../guides/live-test.md) and `live-e2e-result.json` for the detailed result. The table below preserves the original fixture-only verification baseline.
 
 ## Results
 

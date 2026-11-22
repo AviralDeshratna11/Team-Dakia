@@ -2,7 +2,7 @@
 
 A founder hands over a list of parts. The agent finds suppliers, checks they're real, picks the best price it can trust, and places the orders, with a cited reason for every pick.
 
-Run these commands from the repository root. The CLI uses its own state and synthetic wallet. See the [dashboard README](../README.md) for the web app.
+Run these commands from the repository root. The CLI uses its own state and synthetic wallet. See the [dashboard README](../../README.md) for the web app.
 
 ## Run it
 
@@ -86,4 +86,4 @@ Every step's input, output, API calls and timing are saved to `runs/<run_id>/<st
 | `desk/view.py` | Tables for the notebook and CLI |
 | `desk/packs/*.yaml` | Per-field config: distributors, fx rates, discovery query |
 | `examples/` | Sample requests |
-| `NOTES.md` | What we tried, what worked, what didn't |
+| `docs/planning/team-notes.md` | What we tried, what worked, what didn't |

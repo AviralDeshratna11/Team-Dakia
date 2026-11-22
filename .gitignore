@@ -57,7 +57,7 @@ htmlcov/
 *.log
 logs/
 tmp/
-docs/live-e2e*-result.json
+docs/**/live-e2e*-result.json
 
 # Machine-specific editor and OS files
 .idea/

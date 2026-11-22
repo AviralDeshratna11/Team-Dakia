@@ -10,8 +10,7 @@ services:
     dockerfilePath: ./Dockerfile
     healthCheckPath: /api/health
     envVars:
-      - key: ACCESS_CODE
-        sync: false
+      # Optional: set ACCESS_CODE in the dashboard to require a passcode.
       - key: CRUSTDATA_API_KEY
         sync: false
       - key: MAX_RUNS_PER_DAY

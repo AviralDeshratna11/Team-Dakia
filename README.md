@@ -1,176 +1,162 @@
 # Sourcing Desk
 
-This repository contains the **web dashboard** (React, FastAPI and its worker) and the **team CLI and notebook** (the `desk` package). They have separate entry points, workflow state and synthetic wallets. Use the dashboard for supplier quote review and the RazorpayX UPI payout preview. Use the CLI to try seller investigation, mock RFQ threads and category pack drafting. See the [CLI setup and workflow](docs/team-cli.md).
+**An auditable procurement agent for founders.** Describe what you need in plain language. The agent parses the request, finds suppliers, verifies that they are real and active, screens them for compliance, compares landed cost, and returns a shortlist with unsent RFQ drafts or a purchase plan with simulated, idempotent checkout. Every decision cites its evidence, every credit spent is on a ledger, and anything uncertain comes back to you as a question.
 
-## Test supplier payments
+LLMs gather facts and draft text. **Plain code decides.** Eligibility, budgets, approvals and payments are deterministic and never delegated to a model.
 
-Start the dashboard, API and worker as described below. To exercise checkout without paid provider calls, choose offline fixtures and turn Gemini off. Enter `electronics` as product context and submit the following request.
+```
+you ─▶ chat UI ─▶ FastAPI ─▶ SQLite (durable run state) ◀─▶ worker
+                                                    │
+         ┌──────────────┬──────────────┬────────────┼──────────────┬───────────────┐
+         ▼              ▼              ▼            ▼              ▼               ▼
+      PARSING      DISCOVERING     VERIFYING    RESEARCHING     DECIDING      SCREENING ─▶ EXECUTING
+   Gemini + rules  Crustdata /    identity,     buy data only   landed cost,  compliance    RFQ drafts /
+                   fixtures       factory,      if it changes   reliability,  (owners,      mock checkout
+                                  stability     the decision    eligibility   adverse media)
+         │                                                                        │
+         └──── WAITING_FOR_CLARIFICATION · WAITING_FOR_APPROVAL · WAITING_FOR_HUMAN ┘  (asked in chat)
+```
 
-> Source 500 ESP32-S3 modules, 500 of each, delivered to Bengaluru within three weeks.
+## Contents
 
-Set **Approval required above** to `0` to test the approval step. In **Orders & RFQs**, approve the order, then check the synthetic receipt and wallet debit. The local wallet starts with ₹10,00,000 in synthetic funds, less any existing simulated settlements. You can add test funds from the same tab. If checkout pauses for insufficient funds, add test funds and use **Revise and retry** on the pending review without altering the order.
+- [Capabilities](#capabilities)
+- [Architecture](#architecture)
+- [Repository layout](#repository-layout)
+- [Quick start](#quick-start)
+- [Configuration](#configuration)
+- [Testing](#testing)
+- [Deployment](#deployment)
+- [Safety model](#safety-model)
+- [Limitations](#limitations)
+- [Documentation](#documentation)
 
-**Preview RazorpayX UPI payout** displays the outgoing payout request for the order, including its paise amount, supplier reference, stable idempotency key and placeholder account IDs. The preview uses the [RazorpayX payout-to-VPA contract](https://razorpay.com/docs/api/x/payouts/create/vpa). The current provider is the local synthetic wallet. A live adapter would need a verified supplier-to-fund-account mapping, buyer account authorization, payment approval and reconciliation with RazorpayX status before marking an order paid. The preview makes no provider calls and requires no payment credentials.
+## Capabilities
 
-## General sourcing and human assistance
+| Area | What it does |
+|---|---|
+| **Conversational UI** | One prompt box. Live step-by-step trace of what the agent is doing and thinking, clarifying questions asked as replies, follow-ups and approvals in the same thread, and an evidence panel per supplier. |
+| **Request understanding** | Gemini 2.5 Flash on Vertex AI produces a schema-validated `ParsedIntent` (items, parameters, quantities with verbatim excerpts). Code validates every field; anything missing becomes a single focused question. |
+| **Live supplier discovery** | Crustdata Company Search with region filters, Company Enrich for headcount, locations, taxonomy, people and news, and count-only Job Search to tell factories from traders. Gemini can refine one follow-up search and read up to two supplier pages (URL Context). |
+| **Verification** | Signals are `pass`, `fail` or `not confirmed`. A missing fact never counts as a pass, and conflicting records stay unconfirmed. Identities merge only on canonical company IDs. |
+| **Compliance screen** | Owners and directors, adverse media with namesake clearing, and front-company signs (recent founding, tiny headcount, PO-box addresses, shared addresses). Verdict: block, hold for review, or approve. |
+| **Decision engine** | Integer-paise landed cost (goods, shipping, duty, tax with `Decimal` rounding), quantity tiers, MOQ, deadline and stock checks. Reliability and evidence coverage are scored separately. Deterministic ordering. |
+| **Spend control** | Every Crustdata credit is reserved in a persistent journal before the call, under a ceiling that can be lowered mid-run. Data is bought only when it can change the decision. Gemini is capped at 4 generations per run, with cached responses. |
+| **Execution** | RFQ drafts addressed to a named decision-maker (never sent). Purchase orders above the approval threshold wait for an explicit, version-bound approval. Mock checkout with stable idempotency keys survives crashes and timeouts without double-paying. |
+| **Human hand-off** | When verified sourcing cannot finish, the run pauses in `WAITING_FOR_HUMAN` with a durable task. The chat lets you add detail to retry, or cancel. |
+| **Team CLI** | The `desk` package runs the same pipeline from a terminal: seller investigation, mock RFQ threads, and agent-drafted category packs. |
 
-The main form now accepts any product or service, with optional free-text context instead of fixed category choices. Choose **Purchase plan** or **Supplier shortlist and RFQ drafts** independently. There is no preselected electronics supplier. Existing fixture catalogues remain limited offline examples.
+## Architecture
 
-When verified sourcing cannot finish, a durable task appears in the **Human review inbox** and the run pauses in `WAITING_FOR_HUMAN`. A reviewer can revise and retry, record manual handling with a reference, or cancel. See [the general sourcing and human-review workflow](docs/general-and-human-review.md).
+A modular monolith with a **separate durable worker**. The API only records intent. The worker advances each run one persisted step per transaction (`BEGIN IMMEDIATE` on SQLite), so a crash at any point resumes from the last committed state.
 
-To continue with a supplier-issued quote, open the pending review and use **Add supplier quote**. Choose a requested item, enter evidence for the supplier and the quote, and confirm the quoted specifications, availability, delivery and all-in INR total. Choose **Evaluate supplier quotes** to reuse the saved terms without repeating discovery or Gemini extraction. Configured compliance checks still apply. Check eligibility and any approval in **Orders & RFQs**, then view the synthetic receipt and payout preview.
+| Layer | Path | Responsibility |
+|---|---|---|
+| Contracts | `backend/app/contracts/` | Pydantic models: the source of truth, exported to [OpenAPI 3.1](docs/api/openapi.json) and generated TypeScript types |
+| Domain | `backend/app/domain/` | Pure logic: decision engine, compliance, supplier signals, state machine. Imports no HTTP or SDK code. |
+| Workflow | `backend/app/workflow/` | `Orchestrator` state transitions and the polling `worker` |
+| Services | `backend/app/services/` | LLM extraction, specification parsing, supplier search, product pages, quotes, human review |
+| Providers | `backend/app/providers/` | Crustdata (journaled, capped), Gemini via Vertex AI (Gemini-only guard), fixtures, mock payments, RazorpayX payout preview |
+| Persistence | `backend/app/persistence/` | SQLite run documents, reservations, double-entry-style ledger |
+| Packs | `backend/app/packs/` | Validated category policies (electronics, leather goods, general): scoring, freshness, demo tax and duty |
+| API | `backend/app/main.py` | FastAPI routes, passcode gate and spend caps for hosted use, static UI serving |
+| UI | `frontend/src/` | React 19, TypeScript, Vite and Tailwind chat client. Types generated from OpenAPI. |
 
-A local procurement-agent skeleton for founders who currently compare suppliers, verify companies and calculate landed costs themselves. It turns a reference electronics BOM into an auditable plan and simulated orders, or a leather-goods request into a manufacturer shortlist and unsent RFQ drafts.
+Deep dive: [architecture](docs/design/architecture.md), [contracts](docs/design/contracts.md), [LLM layer](docs/design/llm-layer.md), [human review](docs/design/human-review.md).
 
-**Live mode finds and checks real suppliers through Crustdata.** For leather goods it searches Crustdata's company graph by state, checks each candidate with Company Enrich and count-only Job Search, and decides in plain code whether it is a real, active factory or a trader. It stops paying once the shortlist is full, buys a 1-credit news check only when it could change the shortlist, and drafts an RFQ to a named decision-maker at each chosen maker. Every credit is on the run's ledger with the reason it was spent, under a ceiling the founder can lower mid-run (dashboard default 5 credits). Sample-data mode still runs offline with synthetic companies. Payments stay simulated and RFQs stay drafts: no vendor is contacted and no real money moves.
+## Repository layout
 
-### Live supplier checks (Crustdata)
+```
+.
+├── backend/            FastAPI service + workflow worker (Python 3.11+)
+│   ├── app/            contracts · domain · workflow · services · providers · persistence · packs
+│   └── tests/          200 offline tests: unit, API inventory, benchmark, hosted guards
+├── frontend/           React chat UI (Vite, TypeScript, Tailwind)
+├── desk/               Team CLI agent and category packs (Python 3.12+, uv)
+├── tests/              CLI tests: the brief's hard cases
+├── deploy/             Container entrypoint (API + supervised worker)
+├── scripts/            OpenAPI export, live end-to-end runs, Vertex check, worker launcher
+├── examples/           Sample requests for the CLI
+├── fixtures/           Synthetic supplier catalogues for offline demos
+├── notebooks/          Walkthrough notebook
+├── docs/               design · api · guides · quality · planning · brief  (index: docs/README.md)
+├── Dockerfile          Multi-stage image: UI build → Python runtime
+├── render.yaml         Render blueprint (secrets entered in the dashboard, never committed)
+└── Makefile            install · api · worker · web · serve · test · build · contracts · docker
+```
 
-| Step | Crustdata call | Cost | What it decides |
-|---|---|---|---|
-| Find candidates | Company Search, ranked query + `locations.state` filter | 0.03 per result | Real companies with canonical IDs from the start |
-| Check each one | Company Enrich (basic info, headcount, locations, taxonomy, people, news, revenue) | 2 per company, reused free for 7 days | Active and stable, office in the region, named contact |
-| Factory or trader | Job Search, `limit: 0` counts of production vs sales posts | ~0 | Supporting evidence next to NAICS code and listed industry |
-| Only if it changes the result | Web Search, news, India, last 12 months | 1 | Complaints or bad news for a borderline maker |
+## Quick start
 
-Signals are True, False or "not confirmed"; a missing fact never counts as a pass. Conflicting records (a manufacturing industry with a wholesale NAICS code) stay "not confirmed". A 429 retries on the next worker step, up to 3 times; a failed check leaves that supplier unverified instead of failing the run.
-
-### Compliance screen on finalists (Trust and compliance, themes 5.1 and 5.2)
-
-Before any RFQ or order goes out, each finalist gets a vendor check. It covers the gap that has cost Indian buyers most: a front company that looks real on paper.
-
-1. **Who runs it.** Owners and directors come from Company Enrich `people`. If the profile has none, Person Search looks for current employees with founder, owner, proprietor, director, partner or CEO titles.
-2. **Adverse media on each director.** An Indian news search covers the last 3 years. **Namesakes are cleared**: an article counts only if it also names the company, its domain or its city. A "fraud" headline about someone else with the same name is listed as cleared, not counted.
-3. **Front-company signs.** These are: founded under 2 years ago; 3 or fewer staff for a supposed factory; an address on record that is a list of post offices rather than a street address; the same street address as another candidate.
-4. **Verdict.**
-   - **Block:** adverse news tied to the company's leadership. The supplier leaves the shortlist and the run goes back to research to qualify a replacement.
-   - **Hold:** the owner can't be confirmed, or there are front-company signs. The supplier stays on the shortlist, but its RFQ is marked "held for your review before sending".
-   - **Approve:** none of the above.
-
-Run one live request from the command line (reads `CRUSTDATA_API_KEY` from `.env`, never printed):
+Requires Python 3.11+ and Node.js 20.19+. Without any keys, the system runs fully offline on synthetic fixtures.
 
 ```bash
-.venv/bin/python scripts/live_leather.py "Find three leather-goods manufacturers in Uttar Pradesh, check each is real and active, and draft the first email to each." --credits 25
+make install          # .venv + backend (with tests) + frontend deps
+make api              # terminal 1: http://127.0.0.1:8000  (OpenAPI docs at /docs)
+make worker           # terminal 2: advances runs, same SOURCING_DB as the API
+make web              # terminal 3: chat UI at http://127.0.0.1:5173
 ```
 
-For the dashboard, start the worker with the key in its environment: `python ../scripts/start_worker.py --crustdata` from `backend`.
+Or run everything on one port, the way it's deployed: `make serve`, then open http://127.0.0.1:8000.
 
-### Gemini: two extraction stages
+Try these in the chat:
 
-**Configured locally with the supplied Vertex AI service account:** Google Gemini only, `gemini-2.5-flash`, location `global`. The external credential is not copied into the project. `scripts/start_worker.py` loads the ignored `.env` setup, and the model ID guard rejects non-Gemini models before authentication. Two actual Vertex extraction checks passed. See [Vertex setup and verification](docs/llm-layer.md).
+> Find three leather-goods manufacturers in Uttar Pradesh, check each is real and active, and draft the first email to each.
 
-The dashboard defaults to **Live** and **Use Gemini** enabled. Enter a supplier domain and set a **0.2-credit** budget for the minimal identity test. To search for suppliers instead, clear the domain and explicitly choose a larger credit budget. The application never increases it automatically. Configure delivery/category/budget form fields consistently with the request text; conflicts require clarification. Fixture mode remains available for offline demos.
+> Source ESP32-S3 modules, a 3.3V 500mA SOT-23 LDO regulator, 10uF 0805 capacitors and USB-C connectors. 500 of each, delivered to Bengaluru within three weeks.
 
-Enable the Gemini checkbox in a new dashboard request to use an LLM for (1) parsing the founder's requirements and (2) extracting useful facts, summaries and gaps from Crustdata evidence. Outputs are validated and saved; model-derived facts never authorize spending or silently become verified quotes. Normally two model calls are made, with four attempts maximum per run and persistent response caching.
+## Configuration
 
-For a live run with **Use Gemini** enabled and the supplier domain left blank, Gemini can use the initial Crustdata evidence to refine the search for the first item with a purchasing or shortlist gap. The worker performs at most one follow-up search per run and fits the search, identity checks and page fetches inside the configured Crustdata credit ceiling. Open **Gemini intelligence** for the new leads, source pages and search status. Confirm purchase terms with supplier-issued evidence before checkout.
+All configuration is through environment variables (see [`.env.example`](.env.example)). The API and the worker must share `SOURCING_DB`.
 
-When the plan still has a gap, Gemini can open up to two supplier pages returned by Crustdata via [URL Context](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/url-context). **Gemini intelligence → Product details from supplier pages** shows details only for pages Gemini reported retrieving successfully. Product specs, prices, stock, shipping and delivery are shown with their source and require purchase verification. Page reading uses the existing four-generation Gemini cap and spends no Crustdata credits.
+| Variable | Default | Purpose |
+|---|---|---|
+| `SOURCING_DB` | `./sourcing.db` | Workflow database. Sibling files hold payments, provider credits and the LLM journal. |
+| `GOOGLE_APPLICATION_CREDENTIALS` | unset | Service-account JSON for Gemini on Vertex AI. Keep it **outside** the repository. |
+| `GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_LOCATION` | from key / `global` | Vertex AI project and location |
+| `GEMINI_MODEL` | `gemini-2.5-flash` | Only bare `gemini-*` IDs are accepted |
+| `GEMINI_BACKEND` | auto | `vertex` (service account) or `developer` (`GEMINI_API_KEY`) |
+| `CRUSTDATA_API_KEY` | unset | Enables live supplier data. Without it, runs use fixtures. |
+| `ACCESS_CODE` | unset | Hosted only: shared passcode, required as `X-Access-Code` on `/api/*` |
+| `MAX_RUNS_PER_DAY` | unset | Hosted only: new requests per rolling 24 hours |
+| `MAX_CREDIT_BUDGET` | unset | Hosted only: highest Crustdata ceiling a run may set |
+| `FRONTEND_DIST` | unset | Serve the built UI from the API process |
 
-Stop any existing worker first. From `backend`, start a replacement with hidden key prompts:
+Keys are read only by the worker and API processes. They are never sent to the browser, logged, or committed (`.gitignore` blocks `.env` files and service-account keys).
 
-```powershell
-python ../scripts/start_worker.py --gemini --crustdata
+## Testing
+
+```bash
+make test        # backend: 200 passed, 3 xfailed (offline: temp SQLite, mocked HTTP, no keys)
+make test-cli    # team CLI: the brief's hard cases
+make build       # strict TypeScript check + production UI build
 ```
 
-For Vertex, set `GEMINI_BACKEND=vertex`, `GOOGLE_APPLICATION_CREDENTIALS` to the external JSON, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION=global`, and `GEMINI_MODEL=gemini-2.5-flash` in the ignored `.env`; no Gemini API-key prompt is needed. `CRUSTDATA_API_KEY` can be entered at the worker's hidden prompt. A separate `GEMINI_BACKEND=developer` configuration supports an actual `GEMINI_API_KEY`, but that route cannot use the service-account JSON. Keep API and worker in the same working directory. The frontend never receives these keys. Fixture mode with Gemini off still needs no key. The Crustdata credit budget and Gemini token usage are separate.
+The backend suite covers state transitions, the decision engine, compliance, credit journaling, payment idempotency and crash recovery, Gemini output validation, and the human-review flow. It also includes an **inventory test that exercises every API route** and checks the checked-in OpenAPI spec. After changing a model, run `make contracts` to regenerate `docs/api/openapi.json` and `frontend/src/types/schema.d.ts`.
 
-### Run locally
+See [verification](docs/quality/verification.md) and the [benchmark](docs/quality/benchmark.md).
 
-Requires Python 3.11+ and Node.js 20.19+ or 22.12+. Commands below assume PowerShell, starting at the repository root. Use `npm.cmd` on Windows if execution policy blocks `npm.ps1`; on macOS/Linux use `npm`.
+## Deployment
 
-Create and install the backend environment:
+One container runs the API, a supervised worker and the built UI ([Dockerfile](Dockerfile), [deploy/start.sh](deploy/start.sh)). [render.yaml](render.yaml) deploys it to Render. The Vertex AI key is mounted as a secret file, and the passcode, run limit and credit cap are set as environment variables. Full steps: [deployment guide](docs/guides/deployment.md).
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".\backend[test]"
-```
+## Safety model
 
-Terminal 1, from the root:
+- **No real-world side effects.** RFQs are drafts and are never sent. Payments go to a local synthetic wallet. The RazorpayX payout is a preview only.
+- **Models cannot authorize anything.** Gemini output is schema-validated, must cite its evidence, and is stored as `unverified`. It never changes eligibility, budgets or approvals.
+- **Gemini only.** A model-ID guard rejects non-Gemini models before authentication.
+- **Bounded spend.** Credits are journaled before each call and checked against a ceiling the user can lower. Ambiguous paid calls are never retried blindly.
+- **Exactly-once intent.** `PAY_PENDING` is persisted before checkout. Retries reuse the same idempotency key, and approvals are bound to the plan version and amount.
 
-```powershell
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000
-```
+## Limitations
 
-Terminal 2, from the root:
+- SQLite with a single writer lock suits a demo. Concurrent production use needs leased jobs and Postgres.
+- Without live data, the fixture catalogue covers only the two reference requests above. Other products end in a human hand-off.
+- Tax, duty and FX figures are demo assumptions in the category packs, not verified rules.
+- Chat history is stored in the browser. The hosted passcode is a shared demo gate, not user authentication.
 
-```powershell
-.\.venv\Scripts\python.exe -m app.workflow.worker
-```
+## Documentation
 
-Terminal 3:
+The full index is at [docs/README.md](docs/README.md): design, API, guides, quality, planning, and the original [project brief](docs/brief/sourcing-desk-project-brief.pdf).
 
-```powershell
-cd frontend
-npm.cmd ci
-npm.cmd run dev
-```
+## Team
 
-Open the Vite Local URL, normally **http://127.0.0.1:5173**. API documentation: **http://127.0.0.1:8000/docs**. The dashboard proxies `/api` to port 8000. API and worker must use the same working directory (root above), so both find the same database.
-
-Python imports work from the root after the editable backend installation. Alternatively, with the dependencies already installed, run both Python commands from `backend`, omitting `--app-dir backend`.
-
-### First demo
-
-1. Leave the electronics example and choose **Missing stock** to demonstrate purchased research.
-2. Create the request. The separate worker advances one saved step per second.
-3. Inspect Plan for eligible candidates, the cheaper unresolved storefront, landed costs and evidence.
-4. Inspect Research for the mock ₹40 purchase and whether it changed the decision.
-5. The ₹100,000 default approval threshold is below the 500-piece ESP32 order. Approve its exact amount under Orders & RFQs. Other orders below the threshold are automatically authorized by policy.
-6. Choose Leather goods in a new request to run the same engine and produce three unsent RFQs.
-
-For an uninterrupted auto-authorized demo, set the approval threshold to ₹1,000,000. This is an explicit simulation policy, not a recommendation for real purchases.
-
-### Checks and contract generation
-
-```powershell
-cd backend
-python -m pytest -q
-python ../scripts/export_openapi.py
-cd ../frontend
-npm.cmd run generate:api
-npm.cmd run build
-```
-
-Use your virtual environment's Python if the shell is not activated. Backend tests use temporary SQLite databases and an in-memory HTTP mock transport; they need neither keys nor internet. Frontend installation needs internet once. The generated `docs/openapi.json` and `frontend/src/types/schema.d.ts` are checked-in contracts. Regenerate both after changing a backend model.
-
-### Configuration and storage
-
-`SOURCING_DB` optionally specifies an absolute SQLite file path. Set it in the environment of **both** API and worker. `.env.example` documents configuration; `.env` files are not loaded automatically.
-
-```powershell
-$env:SOURCING_DB = 'C:\path\to\sourcing.db'
-```
-
-- Workflow documents, events, reservations and ledger: `sourcing.db`.
-- Independent mock payment provider: `sourcing.db.payments.db`.
-- All currency amounts are integer paise, reported in INR. Provider credit reservations and actual usage have a separate persistent journal; no credit-to-INR conversion is invented.
-- UTC is used internally. Dashboard dates are displayed in Asia/Kolkata.
-- Pack files under `backend/app/packs` contain validated scoring rules, freshness and **demo** tax/duty assumptions.
-
-### What is implemented
-
-- FastAPI/OpenAPI contracts and React/TypeScript/Vite/Tailwind dashboard.
-- Explicit state transitions and a separate resumable worker.
-- Two validated category packs sharing one engine.
-- Fixture alias deduplication using canonical company IDs.
-- Separate hard eligibility, reliability score and evidence coverage.
-- Quantity tiers, shipment/unit shipping, configurable duty/tax and Decimal rounding.
-- Research value heuristic, atomic reservations, budget reductions and separate spending accounts.
-- Version-bound approvals, durable payment intent and independent mock-provider idempotency.
-- Timeout, rate-limit, missing-stock and crash demo scenarios.
-- RFQ drafts with stable identities; repeated resume does not duplicate work.
-
-### Limits and next steps
-
-With Gemini disabled, the fixture parser recognizes only the reference ESP32-S3, 3.3V/500mA/SOT-23 LDO, 10uF/0805 capacitor and USB-C examples. Gemini supports structured extraction from broader wording when enabled; a BOM build count without line quantities still triggers clarification. Structured specs are supported, but unmatched fixture specifications remain ineligible; no arbitrary product matching is claimed. The leather fixture covers Uttar Pradesh manufacturer shortlists. Gemini extraction does not expand the fixture catalogue.
-
-The worker serializes API mutations and workflow advancement in SQLite write transactions. Live calls currently hold that lock during bounded network I/O; separate leased jobs are needed before concurrent production use. This is a local hackathon demonstration. The UI lists complete runs without pagination. There is no production authentication; bind locally.
-
-Each item quote has its own shipment and shipping charge; multi-item shipment consolidation is deferred. Taxes and FX require verified rules before real use. The research heuristic buys missing stock data only when it could make a candidate eligible and cheaper; it does not estimate a precise economic value of information. The paid-data response is local simulation, not an implementation of the x402 wire protocol.
-
-Next: independently verify extracted live quote facts, add production tax/shipping calculation, then a deployment/authentication plan. Live workers read `CRUSTDATA_API_KEY` from their environment. Supply `supplier_domains: ["mouser.com"]` for the minimum-cost identity-only API flow; Search/Fetch exceed the 0.2-credit identity-test cap and are blocked. `python scripts/live_e2e.py` prompts for the key securely and runs that minimal profile without Gemini. Real payments, outreach, automatic pack generation, negotiation and delivery tracking are outside this skeleton.
-
-See [architecture](docs/architecture.md), [contracts](docs/contracts.md), [demo](docs/demo.md), [team plan](docs/implementation-plan.md), and [verification](docs/verification.md).
-
-See [the runnable backend benchmark](docs/benchmark.md) for API coverage, reproduction commands, and expected failures.
+Built at ContextCon 05 by Team Dakia: Palak Manocha, Aviral Deshratna Saxena and Siddharth Khare.

@@ -1,6 +1,6 @@
 # Hosting on Render
 
-One Docker web service runs the API, the worker and the built dashboard on a public `https://<name>.onrender.com` URL. Blueprint: [`render.yaml`](../render.yaml). Image: [`Dockerfile`](../Dockerfile).
+One Docker web service runs the API, the worker and the built dashboard on a public `https://<name>.onrender.com` URL. Blueprint: [`render.yaml`](../../render.yaml). Image: [`Dockerfile`](../../Dockerfile).
 
 ## Why not Google Cloud
 
@@ -10,7 +10,7 @@ The GCP service account is for **Gemini calls through Vertex AI only**. Its rule
 
 1. Render dashboard → **New → Blueprint** → connect `PalakManocha02/Team-Dakia` → branch `deploy/team`.
 2. Enter the values Render asks for (they are never committed):
-   - `ACCESS_CODE`: the team passcode the dashboard asks for.
+   - `ACCESS_CODE` (optional): a team passcode. Leave it unset for an open demo; the run and credit caps still apply.
    - `CRUSTDATA_API_KEY`: needed only for live supplier checks.
 3. Service → **Environment → Secret Files** → add `gcp-sa.json` and paste the service-account JSON. Render mounts it at `/etc/secrets/gcp-sa.json`, which is where `GOOGLE_APPLICATION_CREDENTIALS` points.
 4. Deploy. Health check: `/api/health`.
@@ -19,7 +19,7 @@ The GCP service account is for **Gemini calls through Vertex AI only**. Its rule
 
 | Variable | Default | Effect |
 |---|---|---|
-| `ACCESS_CODE` | required | Every `/api` route except `/api/health` needs the `X-Access-Code` header. The dashboard asks for it once and keeps it in the browser. |
+| `ACCESS_CODE` | optional | Every `/api` route except `/api/health` needs the `X-Access-Code` header. The dashboard asks for it once and keeps it in the browser. |
 | `MAX_RUNS_PER_DAY` | 10 | New requests per rolling 24 hours. Each one can spend Gemini and Crustdata credits. |
 | `MAX_CREDIT_BUDGET` | 25 | Highest Crustdata credit ceiling a run can set or raise to. |
 

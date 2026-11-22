@@ -1,6 +1,6 @@
 # Sourcing Desk backend benchmark
 
-The runnable benchmark uses the FastAPI application, worker, temporary SQLite databases, and mock payments on `main`. [Benchmark source](../backend/tests/test_benchmark.py)
+The runnable benchmark uses the FastAPI application, worker, temporary SQLite databases, and mock payments on `main`. [Benchmark source](../../backend/tests/test_benchmark.py)
 
 ## Run it
 

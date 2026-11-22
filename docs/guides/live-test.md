@@ -4,7 +4,7 @@
 
 Run `9165fd19-605d-4923-80dd-5c8b37a77690` successfully exercised the running dashboard proxy -> FastAPI -> worker -> Vertex Gemini request parser -> Crustdata Company Identify -> Vertex Gemini evidence extractor -> persisted result. The supplier was **Mouser (`mouser.com`)**, resolved to its canonical company record. Both model calls used **Google `gemini-2.5-flash`**; Crustdata charged **0.2 credits**. The result was **COMPLETED_WITH_GAPS**, with no order, because purchasing facts remain unverified. No partner models or other Cloud workloads were called.
 
-The real Vertex credentials stay outside the repository; ignored local `.env` supplies only their file path and project/location/model configuration. See `llm-layer.md` for setup. Local raw results are ignored, not published.
+The real Vertex credentials stay outside the repository; ignored local `.env` supplies only their file path and project/location/model configuration. See [LLM layer](../design/llm-layer.md) for setup. Local raw results are ignored, not published.
 
 The dashboard now lets the user edit the supplier domain and explicitly choose a per-run Crustdata budget (0 to 10 credits). The default is still **0.2**. Known-domain mode checks identity only; clearing the domain enables search, which requires enough explicitly authorized credits. If identification or page retrieval exceeds the remaining budget, obtained candidates are retained with those checks marked unverified. The application does not raise a limit automatically.
 
