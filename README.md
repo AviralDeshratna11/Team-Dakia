@@ -18,19 +18,48 @@ The main form now accepts any product or service, with optional free-text contex
 
 When verified sourcing cannot finish, a durable task appears in the **Human review inbox** and the run pauses in `WAITING_FOR_HUMAN`. A reviewer can revise and retry, record manual handling with a reference, or cancel. See [the general sourcing and human-review workflow](docs/general-and-human-review.md).
 
-To continue with a supplier-issued quote, open the pending review and use **Add supplier quote**. Choose a requested item, enter evidence for the supplier and the quote, and confirm the quoted specifications, availability, delivery and all-in INR total. Choose **Evaluate supplier quotes** to reuse the saved terms without another Crustdata or Gemini call. Check eligibility and any approval in **Orders & RFQs**, then view the synthetic receipt and payout preview.
+To continue with a supplier-issued quote, open the pending review and use **Add supplier quote**. Choose a requested item, enter evidence for the supplier and the quote, and confirm the quoted specifications, availability, delivery and all-in INR total. Choose **Evaluate supplier quotes** to reuse the saved terms without repeating discovery or Gemini extraction. Configured compliance checks still apply. Check eligibility and any approval in **Orders & RFQs**, then view the synthetic receipt and payout preview.
 
 A local procurement-agent skeleton for founders who currently compare suppliers, verify companies and calculate landed costs themselves. It turns a reference electronics BOM into an auditable plan and simulated orders, or a leather-goods request into a manufacturer shortlist and unsent RFQ drafts.
 
-**Fixture mode uses synthetic companies, demo prices/taxes and simulated payments. Live mode supports Crustdata Identify and bounded Search/Fetch, with a default cap of 0.2 provider credits per run. Gemini can optionally parse user requirements and extract cited supplier insights; purchasing facts remain independently unverified.** RFQs stay drafts. No external vendor is contacted and no real money moves.
+**Live mode finds and checks real suppliers through Crustdata.** For leather goods it searches Crustdata's company graph by state, checks each candidate with Company Enrich and count-only Job Search, and decides in plain code whether it is a real, active factory or a trader. It stops paying once the shortlist is full, buys a 1-credit news check only when it could change the shortlist, and drafts an RFQ to a named decision-maker at each chosen maker. Every credit is on the run's ledger with the reason it was spent, under a ceiling the founder can lower mid-run (dashboard default 5 credits). Sample-data mode still runs offline with synthetic companies. Payments stay simulated and RFQs stay drafts: no vendor is contacted and no real money moves.
 
-See [live-test results and the minimal credit policy](docs/live-test.md). The first live connectivity run used 2.2 credits; the new identity-only test is capped at 0.2 and has not been rerun against the live API after the budget change.
+### Live supplier checks (Crustdata)
 
-## Gemini: two extraction stages
+| Step | Crustdata call | Cost | What it decides |
+|---|---|---|---|
+| Find candidates | Company Search, ranked query + `locations.state` filter | 0.03 per result | Real companies with canonical IDs from the start |
+| Check each one | Company Enrich (basic info, headcount, locations, taxonomy, people, news, revenue) | 2 per company, reused free for 7 days | Active and stable, office in the region, named contact |
+| Factory or trader | Job Search, `limit: 0` counts of production vs sales posts | ~0 | Supporting evidence next to NAICS code and listed industry |
+| Only if it changes the result | Web Search, news, India, last 12 months | 1 | Complaints or bad news for a borderline maker |
+
+Signals are True, False or "not confirmed"; a missing fact never counts as a pass. Conflicting records (a manufacturing industry with a wholesale NAICS code) stay "not confirmed". A 429 retries on the next worker step, up to 3 times; a failed check leaves that supplier unverified instead of failing the run.
+
+### Compliance screen on finalists (Trust and compliance, themes 5.1 and 5.2)
+
+Before any RFQ or order goes out, each finalist gets a vendor check. It covers the gap that has cost Indian buyers most: a front company that looks real on paper.
+
+1. **Who runs it.** Owners and directors come from Company Enrich `people`. If the profile has none, Person Search looks for current employees with founder, owner, proprietor, director, partner or CEO titles.
+2. **Adverse media on each director.** An Indian news search covers the last 3 years. **Namesakes are cleared**: an article counts only if it also names the company, its domain or its city. A "fraud" headline about someone else with the same name is listed as cleared, not counted.
+3. **Front-company signs.** These are: founded under 2 years ago; 3 or fewer staff for a supposed factory; an address on record that is a list of post offices rather than a street address; the same street address as another candidate.
+4. **Verdict.**
+   - **Block:** adverse news tied to the company's leadership. The supplier leaves the shortlist and the run goes back to research to qualify a replacement.
+   - **Hold:** the owner can't be confirmed, or there are front-company signs. The supplier stays on the shortlist, but its RFQ is marked "held for your review before sending".
+   - **Approve:** none of the above.
+
+Run one live request from the command line (reads `CRUSTDATA_API_KEY` from `.env`, never printed):
+
+```bash
+.venv/bin/python scripts/live_leather.py "Find three leather-goods manufacturers in Uttar Pradesh, check each is real and active, and draft the first email to each." --credits 25
+```
+
+For the dashboard, start the worker with the key in its environment: `python ../scripts/start_worker.py --crustdata` from `backend`.
+
+### Gemini: two extraction stages
 
 **Configured locally with the supplied Vertex AI service account:** Google Gemini only, `gemini-2.5-flash`, location `global`. The external credential is not copied into the project. `scripts/start_worker.py` loads the ignored `.env` setup, and the model ID guard rejects non-Gemini models before authentication. Two actual Vertex extraction checks passed. See [Vertex setup and verification](docs/llm-layer.md).
 
-The dashboard defaults to **Live** and **Use Gemini** enabled. Keep a supplier domain and the default **0.2-credit** budget for the minimal identity test. To search for suppliers instead, clear the domain and explicitly choose a larger credit budget. The application never increases it automatically. Configure delivery/category/budget form fields consistently with the request text; conflicts require clarification. Fixture mode remains available for offline demos.
+The dashboard defaults to **Live** and **Use Gemini** enabled. Enter a supplier domain and set a **0.2-credit** budget for the minimal identity test. To search for suppliers instead, clear the domain and explicitly choose a larger credit budget. The application never increases it automatically. Configure delivery/category/budget form fields consistently with the request text; conflicts require clarification. Fixture mode remains available for offline demos.
 
 Enable the Gemini checkbox in a new dashboard request to use an LLM for (1) parsing the founder's requirements and (2) extracting useful facts, summaries and gaps from Crustdata evidence. Outputs are validated and saved; model-derived facts never authorize spending or silently become verified quotes. Normally two model calls are made, with four attempts maximum per run and persistent response caching.
 
@@ -42,7 +71,7 @@ python ../scripts/start_worker.py --gemini --crustdata
 
 For Vertex, set `GEMINI_BACKEND=vertex`, `GOOGLE_APPLICATION_CREDENTIALS` to the external JSON, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION=global`, and `GEMINI_MODEL=gemini-2.5-flash` in the ignored `.env`; no Gemini API-key prompt is needed. `CRUSTDATA_API_KEY` can be entered at the worker's hidden prompt. A separate `GEMINI_BACKEND=developer` configuration supports an actual `GEMINI_API_KEY`, but that route cannot use the service-account JSON. Keep API and worker in the same working directory. The frontend never receives these keys. Fixture mode with Gemini off still needs no key. The Crustdata credit budget and Gemini token usage are separate.
 
-## Run locally
+### Run locally
 
 Requires Python 3.11+ and Node.js 20.19+ or 22.12+. Commands below assume PowerShell, starting at the repository root. Use `npm.cmd` on Windows if execution policy blocks `npm.ps1`; on macOS/Linux use `npm`.
 
@@ -77,7 +106,7 @@ Open the Vite Local URL, normally **http://127.0.0.1:5173**. API documentation: 
 
 Python imports work from the root after the editable backend installation. Alternatively, with the dependencies already installed, run both Python commands from `backend`, omitting `--app-dir backend`.
 
-## First demo
+### First demo
 
 1. Leave the electronics example and choose **Missing stock** to demonstrate purchased research.
 2. Create the request. The separate worker advances one saved step per second.
@@ -88,7 +117,7 @@ Python imports work from the root after the editable backend installation. Alter
 
 For an uninterrupted auto-authorized demo, set the approval threshold to ₹1,000,000. This is an explicit simulation policy, not a recommendation for real purchases.
 
-## Checks and contract generation
+### Checks and contract generation
 
 ```powershell
 cd backend
@@ -101,7 +130,7 @@ npm.cmd run build
 
 Use your virtual environment's Python if the shell is not activated. Backend tests use temporary SQLite databases and an in-memory HTTP mock transport; they need neither keys nor internet. Frontend installation needs internet once. The generated `docs/openapi.json` and `frontend/src/types/schema.d.ts` are checked-in contracts. Regenerate both after changing a backend model.
 
-## Configuration and storage
+### Configuration and storage
 
 `SOURCING_DB` optionally specifies an absolute SQLite file path. Set it in the environment of **both** API and worker. `.env.example` documents configuration; `.env` files are not loaded automatically.
 
@@ -115,7 +144,7 @@ $env:SOURCING_DB = 'C:\path\to\sourcing.db'
 - UTC is used internally. Dashboard dates are displayed in Asia/Kolkata.
 - Pack files under `backend/app/packs` contain validated scoring rules, freshness and **demo** tax/duty assumptions.
 
-## What is implemented
+### What is implemented
 
 - FastAPI/OpenAPI contracts and React/TypeScript/Vite/Tailwind dashboard.
 - Explicit state transitions and a separate resumable worker.
@@ -128,7 +157,7 @@ $env:SOURCING_DB = 'C:\path\to\sourcing.db'
 - Timeout, rate-limit, missing-stock and crash demo scenarios.
 - RFQ drafts with stable identities; repeated resume does not duplicate work.
 
-## Limits and next steps
+### Limits and next steps
 
 With Gemini disabled, the fixture parser recognizes only the reference ESP32-S3, 3.3V/500mA/SOT-23 LDO, 10uF/0805 capacitor and USB-C examples. Gemini supports structured extraction from broader wording when enabled; a BOM build count without line quantities still triggers clarification. Structured specs are supported, but unmatched fixture specifications remain ineligible; no arbitrary product matching is claimed. The leather fixture covers Uttar Pradesh manufacturer shortlists. Gemini extraction does not expand the fixture catalogue.
 
@@ -136,6 +165,6 @@ The worker serializes API mutations and workflow advancement in SQLite write tra
 
 Each item quote has its own shipment and shipping charge; multi-item shipment consolidation is deferred. Taxes and FX require verified rules before real use. The research heuristic buys missing stock data only when it could make a candidate eligible and cheaper; it does not estimate a precise economic value of information. The paid-data response is local simulation, not an implementation of the x402 wire protocol.
 
-Next: independently verify extracted live quote facts, add production tax/shipping calculation, then a deployment/authentication plan. Live workers read `CRUSTDATA_API_KEY` from their environment. Supply `supplier_domains: ["mouser.com"]` for the minimum-cost identity-only API flow; Search/Fetch exceed the default 0.2 cap and are blocked. `python scripts/live_e2e.py` prompts for the key securely and runs that minimal profile without Gemini. Real payments, outreach, automatic pack generation, negotiation and delivery tracking are outside this skeleton.
+Next: independently verify extracted live quote facts, add production tax/shipping calculation, then a deployment/authentication plan. Live workers read `CRUSTDATA_API_KEY` from their environment. Supply `supplier_domains: ["mouser.com"]` for the minimum-cost identity-only API flow; Search/Fetch exceed the 0.2-credit identity-test cap and are blocked. `python scripts/live_e2e.py` prompts for the key securely and runs that minimal profile without Gemini. Real payments, outreach, automatic pack generation, negotiation and delivery tracking are outside this skeleton.
 
 See [architecture](docs/architecture.md), [contracts](docs/contracts.md), [demo](docs/demo.md), [team plan](docs/implementation-plan.md), and [verification](docs/verification.md).

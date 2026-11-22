@@ -375,7 +375,9 @@ export interface components {
         /** BudgetUpdate */
         BudgetUpdate: {
             /** Research Budget Minor */
-            research_budget_minor: number;
+            research_budget_minor?: number | null;
+            /** Provider Credit Limit */
+            provider_credit_limit?: number | null;
         };
         /** Candidate */
         Candidate: {
@@ -690,6 +692,8 @@ export interface components {
             id: string;
             /** Supplier Id */
             supplier_id: string;
+            /** Recipient */
+            recipient: string | null;
             /** Subject */
             subject: string;
             /** Body */
@@ -716,6 +720,8 @@ export interface components {
             question: string;
             /** Quoted Minor */
             quoted_minor: number;
+            /** Quoted Credits */
+            quoted_credits: string | null;
             /** Rationale */
             rationale: string;
             /**
@@ -750,7 +756,7 @@ export interface components {
          * RunState
          * @enum {string}
          */
-        RunState: "CREATED" | "PARSING" | "WAITING_FOR_CLARIFICATION" | "DISCOVERING" | "VERIFYING" | "RESEARCHING" | "DECIDING" | "WAITING_FOR_APPROVAL" | "WAITING_FOR_HUMAN" | "EXECUTING" | "COMPLETED" | "COMPLETED_WITH_GAPS" | "FAILED" | "CANCELLED";
+        RunState: "CREATED" | "PARSING" | "WAITING_FOR_CLARIFICATION" | "DISCOVERING" | "VERIFYING" | "RESEARCHING" | "DECIDING" | "SCREENING" | "WAITING_FOR_APPROVAL" | "WAITING_FOR_HUMAN" | "EXECUTING" | "COMPLETED" | "COMPLETED_WITH_GAPS" | "FAILED" | "CANCELLED";
         /** SourcingRequest */
         "SourcingRequest-Input": {
             /** Text */
@@ -989,6 +995,14 @@ export interface components {
              * @enum {string}
              */
             identity: "resolved" | "unverified";
+            /** Profile */
+            profile: {
+                [key: string]: unknown;
+            };
+            /** Contact */
+            contact: {
+                [key: string]: string;
+            } | null;
         };
         /** SupplierCheck */
         SupplierCheck: {

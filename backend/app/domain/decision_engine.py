@@ -44,8 +44,14 @@ def assess(quote, supplier, request, pack, at: datetime | None = None, *, spec=N
     for signal in pack.trust_signals:
         if signal in {"authorized", "factory"} and signals.get(signal) is not True:
             reasons.append(f"{signal.upper()}_UNVERIFIED_OR_FAILED")
+    for signal in pack.hard_fail_signals:
+        blocked = signal == "compliance" and (supplier.profile or {}).get("compliance", {}).get("verdict") == "block"
+        if signals.get(signal) is False or blocked:
+            reasons.append(f"{signal.upper()}_FAILED")
     cost = None
     if request.request_type == "purchase":
+        if pack.compliance_screen and (supplier.profile or {}).get("compliance", {}).get("verdict") == "hold":
+            reasons.append("COMPLIANCE_REVIEW_REQUIRED")
         if not (reviewed or pack.cost_policy_confirmed): reasons.append("COST_POLICY_UNCONFIRMED")
         if quote.stock is None: reasons.append("STOCK_UNVERIFIED")
         elif quote.stock < quote.quantity: reasons.append("INSUFFICIENT_STOCK")
@@ -61,7 +67,8 @@ def assess(quote, supplier, request, pack, at: datetime | None = None, *, spec=N
         if cost is None: reasons.append("COST_INCOMPLETE")
     # Reviewed terms have an explicit human identity and fulfillment check. Shortlists
     # require verified product fit, but do not infer stock from a catalogue entry.
-    if not reviewed and request.request_type == "purchase" and sum(breakdown.values()) < pack.threshold:
+    requires_reliability = request.request_type == "purchase" or pack.live_discovery == "company_search"
+    if not reviewed and requires_reliability and sum(breakdown.values()) < pack.threshold:
         reasons.append("BELOW_RELIABILITY_THRESHOLD")
     return Candidate(quote_id=quote.id, supplier_id=supplier.id, eligible=not reasons,
                      reason_codes=reasons, reliability=sum(breakdown.values()), coverage=coverage,

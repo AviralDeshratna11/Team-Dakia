@@ -193,6 +193,18 @@ def test_reviewed_supplier_quote_completes_live_mode_with_synthetic_payment(syst
     assert saved.status_code == 201, saved.text
     _, identity = saved.json()['evidence'][-2:]
     assert identity['reference'] == submission['identity_reference']
+    # The same reviewer confirmation cannot override a supplier's compliance hold.
+    reviewed_run = WorkflowRun.model_validate(saved.json())
+    quote, = reviewed_run.quotes
+    supplier, = reviewed_run.suppliers
+    supplier.profile = {'compliance': {'verdict': 'hold'}}
+    pack = pack_for('packaging').model_copy(update={'compliance_screen': True, 'hard_fail_signals': ['compliance']})
+    candidate = assess(quote, supplier, reviewed_run.request, pack, spec=reviewed_run.specs[0])
+    assert not candidate.eligible and 'COMPLIANCE_REVIEW_REQUIRED' in candidate.reason_codes
+    supplier.profile['compliance']['verdict'] = 'block'
+    candidate = assess(quote, supplier, reviewed_run.request, pack, spec=reviewed_run.specs[0])
+    assert not candidate.eligible and 'COMPLIANCE_FAILED' in candidate.reason_codes
+
     result = api.post(path + '/resolve', json={
         'reviewer': 'Test reviewer', 'action': 'evaluate_quotes',
         'note': 'Checked the sample supplier quote against the request.',

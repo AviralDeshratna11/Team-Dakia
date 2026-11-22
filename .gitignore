@@ -70,6 +70,6 @@ Desktop.ini
 
 # CLI run traces, provider cache and notebook checkpoints
 /.venv-cli/
-/runs/
-/.cache/
+runs/
+.cache/
 .ipynb_checkpoints/
