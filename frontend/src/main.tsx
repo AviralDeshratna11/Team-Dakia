@@ -11,7 +11,7 @@ import { TrustCards, CreditLedger, plain } from './components/TrustCards';
 
 const money = (minor: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(minor / 100);
 const date = (value: string) => new Date(value).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' });
-const stageNames = ['PARSING', 'DISCOVERING', 'VERIFYING', 'RESEARCHING', 'DECIDING', 'EXECUTING'];
+const stageNames = ['PARSING', 'DISCOVERING', 'VERIFYING', 'RESEARCHING', 'DECIDING', 'SCREENING', 'EXECUTING'];
 const terminals = new Set(['COMPLETED', 'COMPLETED_WITH_GAPS', 'FAILED', 'CANCELLED']);
 
 function App() {

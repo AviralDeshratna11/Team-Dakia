@@ -669,7 +669,7 @@ export interface components {
          * RunState
          * @enum {string}
          */
-        RunState: "CREATED" | "PARSING" | "WAITING_FOR_CLARIFICATION" | "DISCOVERING" | "VERIFYING" | "RESEARCHING" | "DECIDING" | "WAITING_FOR_APPROVAL" | "WAITING_FOR_HUMAN" | "EXECUTING" | "COMPLETED" | "COMPLETED_WITH_GAPS" | "FAILED" | "CANCELLED";
+        RunState: "CREATED" | "PARSING" | "WAITING_FOR_CLARIFICATION" | "DISCOVERING" | "VERIFYING" | "RESEARCHING" | "DECIDING" | "SCREENING" | "WAITING_FOR_APPROVAL" | "WAITING_FOR_HUMAN" | "EXECUTING" | "COMPLETED" | "COMPLETED_WITH_GAPS" | "FAILED" | "CANCELLED";
         /** SourcingRequest */
         "SourcingRequest-Input": {
             /** Text */

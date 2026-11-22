@@ -1845,6 +1845,7 @@
           "VERIFYING",
           "RESEARCHING",
           "DECIDING",
+          "SCREENING",
           "WAITING_FOR_APPROVAL",
           "WAITING_FOR_HUMAN",
           "EXECUTING",

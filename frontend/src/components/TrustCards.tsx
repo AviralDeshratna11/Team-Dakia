@@ -25,6 +25,7 @@ export const PLAIN_REASONS: Record<string, string> = {
   BELOW_RELIABILITY_THRESHOLD: 'Reliability below the bar',
   STABLE_FAILED: 'Too new, closed or shrinking fast',
   COMPLAINTS_CLEAR_FAILED: 'Red flag in the news',
+  COMPLIANCE_FAILED: 'Blocked by the compliance screen',
   AUTHORIZED_FAILED: 'Not an authorized distributor',
 };
 export const plain = (codes: string[]) => codes.map(c => PLAIN_REASONS[c] ?? c.toLowerCase().replaceAll('_', ' '));
@@ -62,7 +63,8 @@ export function TrustCards({ run }: { run: Run }) {
       const profileCheck = checks.find(c => c.kind === 'profile');
       const candidate = decision?.candidates.find(c => c.supplier_id === s.id);
       const p = (s.profile ?? {}) as Record<string, any>;
-      const status = selected.has(s.id) ? ['On shortlist', 'green'] : profileCheck && profileCheck.result !== 'pass' ? ['Not checked', ''] : candidate?.eligible ? ['Qualified alternative', 'green'] : ['Rejected', 'red'];
+      const verdict = p.compliance?.verdict;
+      const status = selected.has(s.id) && verdict === 'hold' ? ['Shortlist · review', 'amber'] : selected.has(s.id) ? ['On shortlist', 'green'] : verdict === 'block' ? ['Blocked', 'red'] : profileCheck && profileCheck.result !== 'pass' ? ['Not checked', ''] : candidate?.eligible ? ['Qualified alternative', 'green'] : ['Rejected', 'red'];
       const evidence = (ids: string[]) => ids.map(id => run.evidence.find(e => e.id === id)).filter(Boolean)[0];
       return <article className={`card trust-card ${status[1]}`} key={s.id}>
         <div className="spread"><div><h3>{s.name}</h3><small className="muted">{[p.headquarters || s.locations[0], s.domain !== 'unknown' ? s.domain : null].filter(Boolean).join(' · ')}</small></div><span className={`pill ${status[1]}`}>{status[0]}</span></div>
@@ -70,6 +72,7 @@ export function TrustCards({ run }: { run: Run }) {
         {profileCheck && profileCheck.result !== 'pass' ? <p className="muted">{profileCheck.reason}</p> : <>
           <div className="facts">{[p.founded && `Founded ${p.founded}`, p.headcount && `${p.headcount} staff`, typeof p.headcount_change_6m === 'number' && `${p.headcount_change_6m >= 0 ? '+' : ''}${Math.round(p.headcount_change_6m)}% in 6 months`, p.naics && `NAICS ${p.naics}`].filter(Boolean).map(f => <span className="fact" key={String(f)}>{f}</span>)}</div>
           <ul className="trust-rows">{ROWS.map(([kind, label]) => { const c = checks.find(x => x.kind === kind); const e = c && evidence(c.evidence_ids); return <li key={kind}><div className="spread"><span>{label}</span><Chip result={c?.result}/></div>{c && <small>{c.reason}</small>}{e && <small className="source">Source: {e.provider.replaceAll('_', ' ')} · {when(e.observed_at)}</small>}</li>; })}</ul>
+          {p.compliance && <ComplianceBlock c={p.compliance}/>}
           {candidate && !candidate.eligible && <p className="reject"><strong>Why not:</strong> {plain(candidate.reason_codes).join(' · ')}</p>}
           {candidate && <small className="muted">Reliability {candidate.reliability}/100 · {candidate.coverage}% of signals checked</small>}
           {s.contact?.name && selected.has(s.id) && <p className="contact"><Mail size={14}/>RFQ goes to {s.contact.name}{s.contact.title ? `, ${s.contact.title}` : ''}</p>}
@@ -91,4 +94,20 @@ export function CreditLedger({ run, onLower, busy }: { run: Run; onLower: (credi
     </form>
     {rows.length ? rows.map(r => <div className="ledger-row" key={String(r.id)}><div>{String(r.purpose || r.path)}<small>{String(r.path)} · {String(r.state)}{r.created_at ? ` · ${when(String(r.created_at))}` : ''}</small></div><strong>{Number(r.charged ?? r.reserved ?? 0).toFixed(2)}</strong></div>) : <p className="muted">No Crustdata calls yet.</p>}
   </section>;
+}
+
+function ComplianceBlock({ c }: { c: Record<string, any> }) {
+  const label: Record<string, [string, string]> = { approve: ['Approved', 'ok'], hold: ['Hold for review', 'unknown'], block: ['Blocked', 'bad'] };
+  const [text, cls] = label[c.verdict] ?? ['Not screened', 'unknown'];
+  const directors = (c.directors ?? []) as Record<string, any>[];
+  return <div className="compliance">
+    <div className="spread"><strong>Compliance screen</strong><span className={`chip ${cls}`}>{text}</span></div>
+    {(c.reasons as string[]).map(r => <small key={r}>{r}</small>)}
+    {directors.map(d => <div className="director" key={d.name}>
+      <small><strong>{d.name}</strong>{d.title ? `, ${d.title}` : ''} · found via {d.source}</small>
+      {(d.adverse ?? []).map((a: any) => <small className="bad-text" key={a.title}>Adverse: {a.title}</small>)}
+      {(d.namesakes_cleared ?? []).length > 0 && <small>Cleared {d.namesakes_cleared.length} namesake article{d.namesakes_cleared.length === 1 ? '' : 's'}: {d.namesakes_cleared.slice(0, 2).map((a: any) => `"${a.title}"`).join(', ')}</small>}
+      {d.adverse !== undefined && !(d.adverse ?? []).length && !(d.namesakes_cleared ?? []).length && <small>No news about this person in the last 3 years</small>}
+    </div>)}
+  </div>;
 }

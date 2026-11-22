@@ -29,6 +29,7 @@ class RunState(StrEnum):
     VERIFYING = "VERIFYING"
     RESEARCHING = "RESEARCHING"
     DECIDING = "DECIDING"
+    SCREENING = "SCREENING"
     WAITING_FOR_APPROVAL = "WAITING_FOR_APPROVAL"
     WAITING_FOR_HUMAN = "WAITING_FOR_HUMAN"
     EXECUTING = "EXECUTING"
@@ -338,6 +339,8 @@ class CategoryPack(Contract):
     production_job_terms: list[str] = Field(default_factory=list)
     # A signal proven False here rejects the supplier outright (a red flag is not offset by points elsewhere).
     hard_fail_signals: list[str] = Field(default_factory=list)
+    # Screen finalists (who runs it, adverse media, front-company flags) before any RFQ or order.
+    compliance_screen: bool = False
     sales_job_terms: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
