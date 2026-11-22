@@ -1,12 +1,76 @@
+# Local environment files and API credentials (keep safe configuration templates)
 .env
-__pycache__/
-*.db
+.env.*
+!.env.example
+!.env.*.example
+.envrc
+.secrets/
+secrets/
+.credentials/
+.api_keys
+api_keys.json
+credentials.json
+*service-account*.json
+*service_account*.json
+gen-lang-client-*.json
+application_default_credentials.json
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Python environments, caches and package outputs
 .venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+
+# Local SQLite state, payment receipts and provider/LLM journals
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3-shm
+*.sqlite3-wal
+
+# Frontend dependencies and generated builds (keep package-lock.json)
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# Test reports, coverage, logs and temporary artifacts
+.coverage
+.coverage.*
+coverage/
+htmlcov/
+*.log
+logs/
+tmp/
+docs/live-e2e*-result.json
+
+# Machine-specific editor and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+
+# Agent pipeline (desk/) local state
 runs/
 .cache/
 .ipynb_checkpoints/
-# never commit cloud credentials
-gen-lang-client-*.json
-*service-account*.json
 payments_mock.db
 rfq.db

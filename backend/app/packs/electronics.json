@@ -1,0 +1,13 @@
+{
+  "name": "electronics", "version": "1", "spec_fields": ["part_number", "voltage", "current", "package", "capacitance"],
+  "required_fields": ["quantity", "exact part or electrical specifications"],
+  "clarification_rules": ["Ask for per-line quantities when only a build count is supplied", "Ask for exact regulator specifications"],
+  "substitution_constraints": ["Explicit electrical and package compatibility; user-approved alternatives only"],
+  "discovery_hints": ["Manufacturer catalogues", "Authorized distributor catalogues"],
+  "trust_signals": ["authorized", "stable", "identity", "stock", "complaints_clear"],
+  "allowed_kinds": ["manufacturer", "distributor"],
+  "weights": {"identity": 30, "authorized": 25, "stable": 15, "stock": 20, "complaints_clear": 10},
+  "threshold": 75, "freshness_hours": 24, "ordering_method": "checkout",
+  "duty_bps": 0, "tax_bps": 1800, "tax_base": "goods_shipping_duty", "fx_to_inr": {"INR": "1"},
+  "research_cost_minor": 4000, "research_max_order_bps": 500
+}
