@@ -6,7 +6,7 @@ services:
     runtime: docker
     plan: free
     region: singapore
-    branch: deploy/team
+    branch: main
     dockerfilePath: ./Dockerfile
     healthCheckPath: /api/health
     envVars:

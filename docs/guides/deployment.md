@@ -8,7 +8,7 @@ The GCP service account is for **Gemini calls through Vertex AI only**. Its rule
 
 ## One-time setup
 
-1. Render dashboard → **New → Blueprint** → connect `PalakManocha02/Team-Dakia` → branch `deploy/team`.
+1. Render dashboard → **New → Blueprint** → connect `PalakManocha02/Team-Dakia` → branch `main`.
 2. Enter the values Render asks for (they are never committed):
    - `ACCESS_CODE` (optional): a team passcode. Leave it unset for an open demo; the run and credit caps still apply.
    - `CRUSTDATA_API_KEY`: needed only for live supplier checks.
