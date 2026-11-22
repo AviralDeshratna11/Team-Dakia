@@ -155,7 +155,7 @@ One container runs the API, a supervised worker and the built UI ([Dockerfile](D
 
 ## Documentation
 
-The full index is at [docs/README.md](docs/README.md): design, API, guides, quality, planning, and the original [project brief](docs/brief/sourcing-desk-project-brief.pdf).
+The full index is at [docs/README.md](docs/README.md): design, API, guides, quality, planning, and the original [project brief](docs/brief/sourcing-desk-project-brief.pdf). The fork's detailed architecture and workflow diagrams are preserved in [Architecture and workflows](ARCHITECTURE_AND_WORKFLOWS.md).
 
 ## Team
 
