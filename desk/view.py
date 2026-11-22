@@ -80,3 +80,12 @@ def orders(request_key: str | None = None) -> pd.DataFrame:
                           "qty": o.qty, "amount_inr": o.amount_inr, "state": o.state, "held": o.held_reason,
                           "payment": o.payment_id, "last_event": o.events[-1] if o.events else None}
                          for o in list_orders(request_key)])
+
+
+def transcript(agent_result) -> pd.DataFrame:
+    """One row per step of an agent run: what it called, with what, and what came back."""
+    rows = agent_result.transcript if hasattr(agent_result, "transcript") else agent_result["transcript"]
+    return pd.DataFrame([{"turn": t["turn"], "type": t["type"], "tool": t.get("name"),
+                          "args": t.get("args"), "result / text": (t.get("result") or t.get("text")
+                                                                   or t.get("report") or "")}
+                         for t in rows])

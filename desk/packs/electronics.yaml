@@ -64,6 +64,20 @@ discovery:
   query: "{mpn} buy India"
   max_leads: 8
 
+# Step 2b: unknown sellers from the open search are investigated by a bounded agent.
+investigate:
+  leads_per_part: 1       # each lead is one agent run (~5 Gemini calls): keep it small
+  skip_if_title_has: [datasheet, wiki, pdf, "data sheet"]
+  max_turns: 8
+  credit_budget: 8        # Crustdata credits per lead
+
+# Landed-cost defaults for sellers the agent found (not in the list above). PLACEHOLDER.
+unknown_vendor:
+  ships_from: unknown     # treated as an import
+  transit_days: 14
+  shipping_inr: 2500
+  free_shipping_over_inr: null
+
 # Step 3: what makes a seller trustworthy. Score = weighted share of signals that passed.
 reliability:
   min_identify_confidence: 0.8

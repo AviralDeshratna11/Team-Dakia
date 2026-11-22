@@ -43,6 +43,17 @@ def show(records: list[dict]) -> None:
             print()
         if r["step"] == "02_find" and o:
             print(f"FIND [{r['part']}] {o['status']} ({' | '.join(o['tried'])}): {o['reason']}")
+        if r["step"] == "02b_investigate" and o:
+            for ag in o["agents"]:
+                rep = ag["report"] or {}
+                print(f"  AGENT [{r['part']}] {ag['stop_reason']} in {ag['turns']} turns, {ag['credits']:.1f} credits: "
+                      f"{rep.get('seller_name')} ({rep.get('seller_domain')}), {rep.get('seller_type')}, "
+                      f"seller={rep.get('is_seller')}, exact part={rep.get('sells_exact_part')}, "
+                      f"ships to India={rep.get('ships_to_india')}")
+                for f in rep.get("red_flags") or []:
+                    print(f"      red flag: {f}")
+            for q in o["quotes"]:
+                print(f"  -> agent quote: {q['vendor']} {q['status']} ₹{q['unit_price_inr']}/unit {q['note']}")
         if r["step"] == "03_check" and o:
             print()
             for c in o:

@@ -109,6 +109,10 @@ class Quote(BaseModel):
     tiers: list[PriceTier] = []
     params: dict[str, str] = {}
     flags: list[str] = []            # e.g. possible clone: shown to the founder, never auto-picked
+    found_by: str = "catalogue"      # "catalogue" (fixed recipe) or "agent" (investigated lead)
+    seller_type: str | None = None   # from the agent: manufacturer, authorized_distributor, marketplace, ...
+    ships_to_india: bool | None = None   # from the agent; catalogue vendors use the pack instead
+    evidence: list[str] = []         # the agent's facts, each with its source
     buy_qty: int | None = None       # qty we'd actually buy (>= need, if MOQ forces it)
     unit_price: float | None = None  # at buy_qty, in the vendor's currency
     currency: str | None = None

@@ -103,7 +103,11 @@ def _quote(spec: Spec, dist: dict, page: dict, pack: dict) -> Quote:
     q = _bare(spec, dist, page, Status.FOUND, "")
     q = q.model_copy(update={k: v for k, v in fields.items() if k != "tiers"})
     q.tiers = [PriceTier(**t) for t in fields.get("tiers", [])]
+    return assess_quote(q, spec, pack)
 
+
+def assess_quote(q: Quote, spec: Spec, pack: dict) -> Quote:
+    """Same rules for every quote, however it was found: exact part? same maker? price, stock."""
     if extract.norm_mpn(q.mpn) != extract.norm_mpn(spec.mpn):
         q.status, q.note = Status.NO_MATCH, f"page is for {q.mpn}, not {spec.mpn}"
         return q
@@ -115,6 +119,8 @@ def _quote(spec: Spec, dist: dict, page: dict, pack: dict) -> Quote:
         q.status, q.note = Status.GAP, "no price on page"
     elif q.stock is None:
         q.status, q.note = Status.GAP, "stock not on page"
+    elif q.ships_to_india is False:
+        q.status, q.note = Status.FOUND_UNFIT, "doesn't ship to India"
     elif q.stock < spec.qty:
         q.status, q.note = Status.FOUND_UNFIT, f"stock {q.stock} < need {spec.qty}"
     elif q.buy_qty and q.buy_qty > spec.qty:
@@ -194,20 +200,23 @@ def decide(spec: Spec, find: FindResult, checks: list[Check], pack: dict,
         if q.status != Status.FOUND or q.unit_price_inr is None:
             considered.append(_row(q, None, None, f"not a usable quote: {q.status.value} {q.note}".strip()))
             continue
-        c, d = by_domain.get(q.vendor_domain), dists.get(q.vendor_domain, {})
+        c = by_domain.get(q.vendor_domain)
+        d = dists.get(q.vendor_domain) or {**pack.get("unknown_vendor", {}), "ships_to_india": q.ships_to_india}
         lc = landed_cost(q, spec.qty, d, pack)
         row = _row(q, c, lc, "")
         considered.append(row)
         if c is None or c.status == "REJECTED":
             rejected.append({**row, "rule": "not a real company", "why": c.reason if c else "not checked"})
-        elif not d.get("ships_to_india"):
+        elif d.get("ships_to_india") is False:
             rejected.append({**row, "rule": "doesn't ship to India", "why": f"{q.vendor} not marked ships_to_india"})
         elif deadline and lc.arrives_by and lc.arrives_by > deadline:
             rejected.append({**row, "rule": "misses the deadline", "why": f"arrives {lc.arrives_by}, need {deadline}"})
         elif c.score is not None and c.score < min_score:
             rejected.append({**row, "rule": "cheaper but untrusted", "why": f"score {c.score} < {min_score}: {c.reason}"})
-        elif c.status == "UNVERIFIED" or q.flags:
-            review.append({**row, "flags": q.flags + ([f"unverified seller: {c.reason}"] if c.status == "UNVERIFIED" else [])})
+        elif c.status == "UNVERIFIED" or q.flags or d.get("ships_to_india") is None:
+            review.append({**row, "flags": q.flags
+                           + ([f"unverified seller: {c.reason}"] if c.status == "UNVERIFIED" else [])
+                           + (["no evidence it ships to India"] if d.get("ships_to_india") is None else [])})
         else:
             ok.append((q, c, lc))
 
@@ -263,7 +272,7 @@ def landed_cost(q: Quote, need_qty: int, dist: dict, pack: dict) -> LandedCost:
 
 
 def _row(q: Quote, c: Check | None, lc: LandedCost | None, note: str) -> dict:
-    return {"vendor": q.vendor, "mpn": q.mpn, "maker": q.manufacturer, "status": q.status.value,
+    return {"vendor": q.vendor, "found_by": q.found_by, "mpn": q.mpn, "maker": q.manufacturer, "status": q.status.value,
             "unit_price_inr": q.unit_price_inr, "buy_qty": q.buy_qty,
             "landed_inr": lc.total_inr if lc else None, "arrives_by": str(lc.arrives_by) if lc and lc.arrives_by else None,
             "seller_score": c.score if c else None, "seller_status": c.status if c else None,

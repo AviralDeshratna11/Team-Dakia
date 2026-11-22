@@ -10,7 +10,8 @@ import yaml
 
 from desk import steps
 from desk.crustdata import Crustdata
-from desk.schemas import Question, Request, SpecResult
+from desk.investigate import investigate_leads
+from desk.schemas import Question, Request, SpecResult, Status
 from desk.trace import Run
 
 # Asks the founder one question and returns the answer (input() on the CLI and in the notebook).
@@ -64,6 +65,10 @@ def run(request_path: str | Path, use_cache: bool = True, ask: Ask | None = None
         return r
     pack, specs, rkey = packs[sr.category], sr.specs, request_key(req)
     finds = [r.step("02_find", steps.find_suppliers, s, pack, cd, part=s.line_id) for s in specs]
+    for s, f in zip(specs, finds):
+        inv = r.step("02b_investigate", investigate_leads, s, f, pack, cd, part=s.line_id)
+        f.quotes += [q for q in inv.quotes if q.status != Status.NO_MATCH]
+        f.alternatives += [q for q in inv.quotes if q.status == Status.NO_MATCH]
     checks = r.step("03_check", steps.check_suppliers, finds, pack, cd)
     r.step("04_buy_data", steps.buy_data, finds, sr.data_budget_inr or 0)
     decisions = [r.step("05_decide", steps.decide, s, f, checks, pack, sr.deadline, part=s.line_id)
