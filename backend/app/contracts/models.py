@@ -1,5 +1,6 @@
 """Canonical runtime contracts; FastAPI exposes these through OpenAPI."""
 from datetime import datetime, timezone
+from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Literal
 from uuid import uuid4
@@ -29,10 +30,12 @@ class RunState(StrEnum):
     RESEARCHING = "RESEARCHING"
     DECIDING = "DECIDING"
     WAITING_FOR_APPROVAL = "WAITING_FOR_APPROVAL"
+    WAITING_FOR_HUMAN = "WAITING_FOR_HUMAN"
     EXECUTING = "EXECUTING"
     COMPLETED = "COMPLETED"
     COMPLETED_WITH_GAPS = "COMPLETED_WITH_GAPS"
     FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
 
 
 class Spec(Contract):
@@ -50,7 +53,7 @@ class Spec(Contract):
 class SourcingRequest(Contract):
     text: str = Field(min_length=5, max_length=10000)
     request_type: Literal["purchase", "shortlist"] = "purchase"
-    category: Literal["electronics", "leather_goods"] = "electronics"
+    category: str = Field(default="general", min_length=1, max_length=100)
     destination: str = Field(default="Bengaluru, India", min_length=2)
     deadline: datetime
     research_budget_minor: int = Field(default=200000, ge=0)
@@ -60,7 +63,9 @@ class SourcingRequest(Contract):
     shortlist_count: int = Field(default=3, ge=1, le=10)
     mode: Literal["fixture", "live"] = "fixture"
     llm_enabled: bool = False
+    human_review_enabled: bool = True
     supplier_domains: list[str] = Field(default_factory=list, max_length=3)
+    provider_credit_limit: Decimal = Field(default=Decimal("0.2"), ge=0, le=10, decimal_places=2)
     scenario: Literal["normal", "missing_stock", "provider_timeout", "checkout_timeout", "checkout_crash"] = "normal"
 
     @model_validator(mode="after")
@@ -69,8 +74,6 @@ class SourcingRequest(Contract):
             raise ValueError("supplier_domains must be plain public domain names, without schemes, paths or ports")
         if self.deadline.tzinfo is None:
             raise ValueError("deadline must include a timezone")
-        if self.category == "leather_goods" and self.request_type != "shortlist":
-            raise ValueError("leather_goods skeleton supports shortlist/RFQ requests")
         if self.specs and len({s.id for s in self.specs}) != len(self.specs):
             raise ValueError("spec IDs must be unique")
         return self
@@ -94,7 +97,7 @@ class Supplier(Contract):
     aliases: list[str] = Field(default_factory=list)
     domain: str
     locations: list[str]
-    kind: Literal["manufacturer", "distributor", "trader", "unknown"]
+    kind: Literal["manufacturer", "distributor", "retailer", "service_provider", "trader", "unknown"]
     identity: Literal["resolved", "unverified"]
 
 
@@ -156,7 +159,7 @@ class Decision(Contract):
     spec_id: str
     selected_quote_id: str | None = None
     selected_supplier_ids: list[str] = Field(default_factory=list)
-    outcome: Literal["selected", "no_eligible_supplier", "incomplete", "clarification_needed"]
+    outcome: Literal["selected", "no_eligible_supplier", "incomplete", "clarification_needed", "handled_by_human"]
     candidates: list[Candidate]
     evidence_ids: list[str]
     config_version: str
@@ -231,6 +234,37 @@ class WorkflowEvent(Contract):
     message: str
 
 
+class HumanReviewTask(Contract):
+    id: str = Field(default_factory=uid)
+    run_id: str
+    status: Literal["pending", "resolved", "cancelled"] = "pending"
+    reason_code: str
+    summary: str
+    blockers: list[str] = Field(default_factory=list)
+    spec_ids: list[str] = Field(default_factory=list)
+    resume_state: RunState
+    created_at: datetime = Field(default_factory=now)
+    resolved_at: datetime | None = None
+    reviewer: str | None = None
+    resolution: Literal["retry", "manual_completion", "cancel"] | None = None
+    note: str | None = None
+    reference: str | None = None
+    resolution_fingerprint: str | None = None
+
+
+class HumanReviewResolution(Contract):
+    reviewer: str = Field(min_length=2, max_length=100)
+    action: Literal["retry", "manual_completion", "cancel"]
+    note: str = Field(min_length=5, max_length=4000)
+    reference: str | None = Field(default=None, max_length=1000)
+    specs: list[Spec] | None = None
+    request_text: str | None = Field(default=None, min_length=5, max_length=10000)
+    supplier_domains: list[str] | None = None
+    provider_credit_limit: Decimal | None = Field(default=None, ge=0, le=10, decimal_places=2)
+    destination: str | None = Field(default=None, min_length=2)
+    deadline: datetime | None = None
+
+
 class WorkflowRun(Contract):
     id: str = Field(default_factory=uid)
     request: SourcingRequest
@@ -254,6 +288,8 @@ class WorkflowRun(Contract):
     request_interpretation: dict[str, Any] | None = None
     supplier_insights: list[dict[str, Any]] = Field(default_factory=list)
     extraction_warnings: list[str] = Field(default_factory=list)
+    human_reviews: list[HumanReviewTask] = Field(default_factory=list)
+    human_completed_spec_ids: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=now)
 
 
@@ -277,6 +313,7 @@ class CategoryPack(Contract):
     fx_to_inr: dict[str, str]
     research_cost_minor: int = Field(gt=0)
     research_max_order_bps: int = Field(gt=0)
+    cost_policy_confirmed: bool = True
 
     @model_validator(mode="after")
     def weights_sum(self):

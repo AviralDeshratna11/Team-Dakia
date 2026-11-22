@@ -11,6 +11,9 @@ secrets/
 api_keys.json
 credentials.json
 *service-account*.json
+*service_account*.json
+gen-lang-client-*.json
+application_default_credentials.json
 *.key
 *.pem
 *.p12

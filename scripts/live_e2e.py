@@ -77,12 +77,12 @@ def main():
         output.write_text(json.dumps(report, indent=2)+"\n", encoding="utf-8")
         print(json.dumps({k:v for k,v in report.items() if k not in {"run","ledger"}}, indent=2), flush=True)
         print("Saved report:", output, flush=True)
-        assert run["state"] == "COMPLETED_WITH_GAPS", "Live run did not finish with explicit verification gaps"
+        assert run["state"] == "WAITING_FOR_HUMAN" and any(t["status"] == "pending" for t in run["human_reviews"]), "Unverified purchasing facts must create a human-review handoff"
         assert run["suppliers"] and any(s["identity"] == "resolved" for s in run["suppliers"]), "No supplier identity resolved"
         assert all(e["mode"] == "live" for e in run["evidence"])
         assert not run["orders"] and not ledger and worker.payments.count() == 0
         assert charged <= Decimal("0.2")
-        print("PASS: live HTTP end-to-end flow; missing purchasing evidence correctly blocked orders.", flush=True)
+        print("PASS: live HTTP flow; missing purchasing evidence blocked orders and requested a human reviewer.", flush=True)
     finally:
         server.should_exit = True
         thread.join(timeout=5)

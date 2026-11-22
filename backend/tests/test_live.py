@@ -105,3 +105,29 @@ def test_search_engine_redirects_are_not_supplier_domains():
     assert supplier_url("https://www.google.com/goto?url=opaque-token") is None
     assert supplier_url("https://www.google.com/url?q=https%3A%2F%2Fmouser.com%2Fproduct") == "https://mouser.com/product"
     assert supplier_url("https://www.google.com/search?q=ESP32") is None
+
+
+def test_explicit_run_budget_is_separate_from_other_runs(tmp_path):
+    calls=[]
+    provider=client(tmp_path,lambda req:(calls.append(req.url.path) or httpx.Response(200,headers={"x-credits-used":"1"},json={"results":[]})),limit="0.2")
+    provider.set_run_limit("user-authorized", "1")
+    provider.search("user-authorized", "query")
+    with pytest.raises(IntegrationUnavailable,match="CREDIT_LIMIT"):
+        provider.search("default-budget", "query")
+    with pytest.raises(IntegrationUnavailable,match="CREDIT_LIMIT"):
+        provider.search("user-authorized", "second query")
+    assert len(calls)==1
+
+
+def test_search_candidates_preserved_when_budget_cannot_cover_more_calls(tmp_path):
+    calls=[]
+    def handler(req):
+        calls.append(req.url.path)
+        assert req.url.path=="/web/search/live"
+        return httpx.Response(200,headers={"x-credits-used":"1"},json={"results":[{"url":"https://supplier.example/product"}]})
+    provider=client(tmp_path,handler,limit="1")
+    req=SourcingRequest(text="500 ESP32-S3 modules",deadline=now()+timedelta(days=21),mode="live",provider_credit_limit="1")
+    suppliers,quotes,evidence=LiveDiscovery(provider,"limited").discover(req,[Spec(description="ESP32-S3",quantity=500)])
+    assert calls==["/web/search/live"]
+    assert suppliers[0].identity=="unverified" and quotes[0].status=="unverified"
+    assert sum(e.provider=="credit_policy" for e in evidence)==2

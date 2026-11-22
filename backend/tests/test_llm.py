@@ -32,7 +32,7 @@ def response(value, finish="STOP"):
 
 
 def run_request(text="ESP32-S3 modules, 500 of each", **overrides):
-    return WorkflowRun(request=SourcingRequest.model_validate({"text":text,"deadline":now()+timedelta(days=21),"llm_enabled":True,**overrides}))
+    return WorkflowRun(request=SourcingRequest.model_validate({"text":text,"category":"electronics","human_review_enabled":False,"deadline":now()+timedelta(days=21),"llm_enabled":True,**overrides}))
 
 
 def test_gemini_structured_request_cache_and_call_limit(tmp_path):
@@ -154,7 +154,7 @@ def test_failed_or_truncated_model_output_is_not_applied_or_retried(tmp_path):
         calls.append(req)
         return response(intent(),finish="MAX_TOKENS")
     client=fake_client(tmp_path,handler)
-    with pytest.raises(IntegrationUnavailable,match="INVALID_OR_BLOCKED"):
+    with pytest.raises(IntegrationUnavailable,match="OUTPUT_TRUNCATED"):
         client.generate("run","parse","policy",{},ParsedIntent)
     with pytest.raises(IntegrationUnavailable,match="PRIOR_CALL_UNRESOLVED"):
         client.generate("run","parse","policy",{},ParsedIntent)

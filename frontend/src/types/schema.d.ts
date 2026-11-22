@@ -21,6 +21,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/human-reviews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Review Queue */
+        get: operations["review_queue_api_human_reviews_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runs/{run_id}/human-review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Request Review */
+        post: operations["request_review_api_runs__run_id__human_review_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runs/{run_id}/human-reviews/{task_id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve Human Review */
+        post: operations["resolve_human_review_api_runs__run_id__human_reviews__task_id__resolve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/runs": {
         parameters: {
             query?: never;
@@ -331,7 +382,7 @@ export interface components {
              * Outcome
              * @enum {string}
              */
-            outcome: "selected" | "no_eligible_supplier" | "incomplete" | "clarification_needed";
+            outcome: "selected" | "no_eligible_supplier" | "incomplete" | "clarification_needed" | "handled_by_human";
             /** Candidates */
             candidates: components["schemas"]["Candidate"][];
             /** Evidence Ids */
@@ -377,6 +428,76 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** HumanReviewRequest */
+        HumanReviewRequest: {
+            /** Note */
+            note: string;
+        };
+        /** HumanReviewResolution */
+        HumanReviewResolution: {
+            /** Reviewer */
+            reviewer: string;
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "retry" | "manual_completion" | "cancel";
+            /** Note */
+            note: string;
+            /** Reference */
+            reference?: string | null;
+            /** Specs */
+            specs?: components["schemas"]["Spec-Input"][] | null;
+            /** Request Text */
+            request_text?: string | null;
+            /** Supplier Domains */
+            supplier_domains?: string[] | null;
+            /** Provider Credit Limit */
+            provider_credit_limit?: number | string | null;
+            /** Destination */
+            destination?: string | null;
+            /** Deadline */
+            deadline?: string | null;
+        };
+        /** HumanReviewTask */
+        HumanReviewTask: {
+            /** Id */
+            id: string;
+            /** Run Id */
+            run_id: string;
+            /**
+             * Status
+             * @default pending
+             * @enum {string}
+             */
+            status: "pending" | "resolved" | "cancelled";
+            /** Reason Code */
+            reason_code: string;
+            /** Summary */
+            summary: string;
+            /** Blockers */
+            blockers: string[];
+            /** Spec Ids */
+            spec_ids: string[];
+            resume_state: components["schemas"]["RunState"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Resolved At */
+            resolved_at: string | null;
+            /** Reviewer */
+            reviewer: string | null;
+            /** Resolution */
+            resolution: ("retry" | "manual_completion" | "cancel") | null;
+            /** Note */
+            note: string | null;
+            /** Reference */
+            reference: string | null;
+            /** Resolution Fingerprint */
+            resolution_fingerprint: string | null;
         };
         /** LedgerEntry */
         LedgerEntry: {
@@ -542,7 +663,7 @@ export interface components {
          * RunState
          * @enum {string}
          */
-        RunState: "CREATED" | "PARSING" | "WAITING_FOR_CLARIFICATION" | "DISCOVERING" | "VERIFYING" | "RESEARCHING" | "DECIDING" | "WAITING_FOR_APPROVAL" | "EXECUTING" | "COMPLETED" | "COMPLETED_WITH_GAPS" | "FAILED";
+        RunState: "CREATED" | "PARSING" | "WAITING_FOR_CLARIFICATION" | "DISCOVERING" | "VERIFYING" | "RESEARCHING" | "DECIDING" | "WAITING_FOR_APPROVAL" | "WAITING_FOR_HUMAN" | "EXECUTING" | "COMPLETED" | "COMPLETED_WITH_GAPS" | "FAILED" | "CANCELLED";
         /** SourcingRequest */
         "SourcingRequest-Input": {
             /** Text */
@@ -555,10 +676,9 @@ export interface components {
             request_type: "purchase" | "shortlist";
             /**
              * Category
-             * @default electronics
-             * @enum {string}
+             * @default general
              */
-            category: "electronics" | "leather_goods";
+            category: string;
             /**
              * Destination
              * @default Bengaluru, India
@@ -603,8 +723,18 @@ export interface components {
              * @default false
              */
             llm_enabled: boolean;
+            /**
+             * Human Review Enabled
+             * @default true
+             */
+            human_review_enabled: boolean;
             /** Supplier Domains */
             supplier_domains?: string[];
+            /**
+             * Provider Credit Limit
+             * @default 0.2
+             */
+            provider_credit_limit: number | string;
             /**
              * Scenario
              * @default normal
@@ -624,10 +754,9 @@ export interface components {
             request_type: "purchase" | "shortlist";
             /**
              * Category
-             * @default electronics
-             * @enum {string}
+             * @default general
              */
-            category: "electronics" | "leather_goods";
+            category: string;
             /**
              * Destination
              * @default Bengaluru, India
@@ -672,8 +801,18 @@ export interface components {
              * @default false
              */
             llm_enabled: boolean;
+            /**
+             * Human Review Enabled
+             * @default true
+             */
+            human_review_enabled: boolean;
             /** Supplier Domains */
             supplier_domains: string[];
+            /**
+             * Provider Credit Limit
+             * @default 0.2
+             */
+            provider_credit_limit: string;
             /**
              * Scenario
              * @default normal
@@ -757,7 +896,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "manufacturer" | "distributor" | "trader" | "unknown";
+            kind: "manufacturer" | "distributor" | "retailer" | "service_provider" | "trader" | "unknown";
             /**
              * Identity
              * @enum {string}
@@ -856,6 +995,10 @@ export interface components {
             }[];
             /** Extraction Warnings */
             extraction_warnings: string[];
+            /** Human Reviews */
+            human_reviews: components["schemas"]["HumanReviewTask"][];
+            /** Human Completed Spec Ids */
+            human_completed_spec_ids: string[];
             /**
              * Created At
              * Format: date-time
@@ -887,6 +1030,97 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    review_queue_api_human_reviews_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HumanReviewTask"][];
+                };
+            };
+        };
+    };
+    request_review_api_runs__run_id__human_review_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HumanReviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowRun"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_human_review_api_runs__run_id__human_reviews__task_id__resolve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HumanReviewResolution"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowRun"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

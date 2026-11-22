@@ -1,5 +1,7 @@
 # Architecture
 
+Generalization update: requests accept arbitrary product/service context, using a conservative general policy when no specialized internal profile exists. Product scope and outcome (purchase/shortlist) are independent. Failures and incomplete sourcing plans create persisted human-review tasks and pause the worker. Reviewers can revise/retry, record manual handling or cancel; no outside communication is sent. See `general-and-human-review.md` for the state flow, APIs and payment/budget safeguards.
+
 A modular monolith exposes a local FastAPI API. A separate polling worker advances one durable step per transaction. Domain decisions do not import HTTP routes or provider SDKs. Pydantic models are the canonical contracts, exported to OpenAPI and generated frontend types.
 
 ```mermaid

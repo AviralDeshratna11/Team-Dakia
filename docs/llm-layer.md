@@ -1,5 +1,21 @@
 # Gemini integration
 
+## Vertex AI service-account setup
+
+The supplied access README specifies Google Gemini through Vertex AI. The integration now supports that route with `google-genai`, using `vertexai=True`, the credential's own project and location `global`. The configured/tested model is `gemini-2.5-flash`. Model IDs must be bare `gemini-*` names; other families and publisher/resource paths are rejected before authentication. Only synchronous Gemini content generation is exposed: no project changes, resource creation, partner models, tuning, batch jobs, deployment, Secret Manager or other Cloud workloads.
+
+The service-account JSON stays at its original external location. The ignored local `.env` contains only configuration and the path to it, not the private key. `scripts/start_worker.py` loads that file, respecting existing process environment values. The SDK receives explicit service-account credentials and uses the necessary OAuth authentication flow; it does not use the JSON as a Gemini Developer API key.
+
+Copy the non-secret template settings from `.env.example` to a local `.env`, specifying `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION=global`, `GEMINI_BACKEND=vertex` and `GEMINI_MODEL=gemini-2.5-flash`. From `backend`, start `python ../scripts/start_worker.py --crustdata`. Only the Crustdata key needs a hidden prompt; Gemini uses the external JSON. No key is sent to the frontend.
+
+Two real Vertex Gemini checks passed: request parsing and evidence extraction using synthetic supplier evidence. The initial JSON-schema request was rejected with HTTP 400; translating to Vertex's supported `response_schema` format resolved it. Full Pydantic validation still runs locally. SDK generation retries are disabled (`attempts=1`), as is automatic function calling. No non-Gemini model was called. `python scripts/verify_vertex.py` explicitly runs these two billed checks again; it is not part of automated pytest.
+
+The dashboard now defaults to live data and Gemini enabled. A known supplier domain uses the minimal 0.2-credit identity flow. Leave it blank to request broader supplier search and explicitly set an adequate provider-credit budget in the form. The default never rises automatically. Gemini token usage remains separate. Live purchasing claims remain unverified, so missing evidence still blocks orders.
+
+Combined live validation also passed: a real request through the running API resolved Mouser with Crustdata for 0.2 credits and completed both Vertex Gemini extraction stages. It produced cited supplier insights and explicit verification gaps, with no order. The raw result is local and ignored. The credential was not used for any other model family or Cloud workload.
+
+The following original API-key setup remains available only for a separate Google Gemini Developer API account; it is not used for the supplied service-account credential.
+
 The application has two opt-in model stages. Set `llm_enabled: true` on a request, or select the Gemini checkbox in the dashboard. Fixture mode with the checkbox off still needs no keys and makes no model calls.
 
 ## Stage 1: user request -> structured intent
@@ -50,7 +66,7 @@ The model has no tools, browsing, code execution or payment functions. Retrieved
 
 Run `python -m pytest -q` from `backend`. The model tests use mocked Gemini HTTP responses, including a complete API/worker workflow with both stages, citation failures, request clarification, blocked/truncated output, persistent caching, call limits and ambiguous network failure. They consume no Gemini or Crustdata credits.
 
-No real Gemini generation has been performed in this session because a Gemini API key has not been supplied. A live model check remains necessary after configuration. The previous browser interaction/visual verification limitation also remains.
+Real Vertex Gemini checks now pass as described above. The earlier API-key configuration was verified only with mocks. The previous browser interaction/visual verification limitation remains.
 
 Official API references consulted:
 - https://ai.google.dev/api/generate-content

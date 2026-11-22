@@ -40,12 +40,13 @@ def assess(quote, supplier, request, pack, at: datetime | None = None) -> Candid
             reasons.append(f"{signal.upper()}_UNVERIFIED_OR_FAILED")
     cost = None
     if request.request_type == "purchase":
+        if not pack.cost_policy_confirmed: reasons.append("COST_POLICY_UNCONFIRMED")
         if quote.stock is None: reasons.append("STOCK_UNVERIFIED")
         elif quote.stock < quote.quantity: reasons.append("INSUFFICIENT_STOCK")
         if quote.delivery_at is None: reasons.append("DELIVERY_UNVERIFIED")
         elif quote.delivery_at > request.deadline: reasons.append("DEADLINE_MISSED")
         if quote.lead_days is None: reasons.append("LEAD_TIME_UNVERIFIED")
-        cost = landed_cost(quote, pack)
+        cost = landed_cost(quote, pack) if pack.cost_policy_confirmed else None
         if cost is None: reasons.append("COST_INCOMPLETE")
     if sum(breakdown.values()) < pack.threshold: reasons.append("BELOW_RELIABILITY_THRESHOLD")
     return Candidate(quote_id=quote.id, supplier_id=supplier.id, eligible=not reasons,
@@ -61,5 +62,5 @@ def decide(spec, quotes, suppliers, request, pack) -> Decision:
                     selected_supplier_ids=[c.supplier_id for c in selected], outcome="selected" if selected else "no_eligible_supplier",
                     candidates=candidates, evidence_ids=sorted({e for c in selected for e in c.evidence_ids}), config_version=pack.version,
                     explanation="Lowest eligible landed cost; reliability threshold satisfied." if selected and request.request_type == "purchase" else
-                                ("Eligible manufacturers ranked by reliability." if selected else "No supplier meets the evidence and eligibility policy."),
+                                ("Eligible suppliers ranked by reliability." if selected else "No supplier meets the evidence and eligibility policy."),
                     alternatives=[] if selected else ["Confirm missing evidence, approve a substitute, or extend the deadline."])

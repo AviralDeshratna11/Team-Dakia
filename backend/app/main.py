@@ -6,11 +6,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import Field
 from app.contracts import (Contract, SourcingRequest, WorkflowRun, WorkflowEvent, RunState as S,
-                           Spec, Approval, LedgerEntry, BudgetReservation, Decision, Order, RFQDraft, now)
+                           Spec, Approval, LedgerEntry, BudgetReservation, Decision, Order, RFQDraft, Clarification, HumanReviewTask, HumanReviewResolution, now)
 from app.domain.state_machines import transition
 from app.persistence.database import Database
 from app.persistence.repositories import get_run, save_run, list_runs, ledger
 from app.workflow.orchestrator import approve, fingerprint
+from app.services.llm_extraction import LLMExtractionService
+from app.services.human_review import open_review, resolve_review
 
 
 class BudgetUpdate(Contract):
@@ -20,6 +22,10 @@ class BudgetUpdate(Contract):
 class ClarificationAnswer(Contract):
     answer: str = Field(min_length=1, max_length=10000)
     specs: list[Spec] | None = None
+
+
+class HumanReviewRequest(Contract):
+    note: str = Field(min_length=5,max_length=2000)
 
 
 def create_app(database: Database | None = None):
@@ -45,7 +51,29 @@ def create_app(database: Database | None = None):
 
     @app.get("/api/health")
     def health():
-        return {"status": "ok", "payments": "mock", "live_integrations": "Crustdata requires worker key; Gemini parsing/extraction opt-in via llm_enabled and GEMINI_API_KEY", "worker": "separate process required"}
+        return {"status": "ok", "payments": "mock", "live_integrations": "Crustdata requires worker key; Gemini parsing/extraction uses Vertex service-account credentials or a Gemini API key", "worker": "separate process required"}
+
+    @app.get("/api/human-reviews",response_model=list[HumanReviewTask])
+    def review_queue(request: Request):
+        with request.app.state.db.transaction() as c:
+            return [task for run in list_runs(c) for task in run.human_reviews if task.status == "pending"]
+
+    @app.post("/api/runs/{run_id}/human-review",response_model=WorkflowRun)
+    def request_review(run_id: str,body: HumanReviewRequest,request: Request):
+        with request.app.state.db.transaction() as c:
+            run = get_run(c,run_id)
+            if run.state in {S.COMPLETED,S.CANCELLED}: raise ValueError("finished requests cannot be escalated")
+            open_review(run,"USER_REQUESTED",body.note)
+            save_run(c,run)
+        return run
+
+    @app.post("/api/runs/{run_id}/human-reviews/{task_id}/resolve",response_model=WorkflowRun)
+    def resolve_human_review(run_id: str,task_id: str,body: HumanReviewResolution,request: Request):
+        with request.app.state.db.transaction() as c:
+            run = get_run(c,run_id)
+            resolve_review(run,task_id,body)
+            save_run(c,run)
+        return run
 
     @app.post("/api/runs", response_model=WorkflowRun, status_code=201)
     def create(body: SourcingRequest, request: Request):
@@ -104,6 +132,10 @@ def create_app(database: Database | None = None):
         with request.app.state.db.transaction() as c:
             run = get_run(c, run_id)
             if run.state != S.WAITING_FOR_CLARIFICATION: raise ValueError("not awaiting clarification")
+            previous_answer = run.request.text.rsplit("\nClarification: ",1)[-1] if "\nClarification: " in run.request.text else None
+            normalize = lambda value: " ".join(value.split()).casefold()
+            if not body.specs and previous_answer and normalize(body.answer) == normalize(previous_answer):
+                raise ValueError("That answer is already saved. Please answer the current question: "+run.clarification.question)
             run.clarification.answer = body.answer
             run.request.text += "\nClarification: " + body.answer
             if body.specs is not None:
@@ -126,7 +158,19 @@ def create_app(database: Database | None = None):
     def resume(run_id: str, request: Request):
         with request.app.state.db.transaction() as c:
             run = get_run(c, run_id)
+            if run.state == S.WAITING_FOR_HUMAN:
+                raise ValueError("resolve the pending human-review task before resuming")
             if run.state == S.FAILED:
+                last_call = run.llm_usage[-1] if run.llm_usage else {}
+                recoverable = run.error and any(code in run.error for code in ["GEMINI_SCHEMA_INVALID","GEMINI_OUTPUT_TRUNCATED","GEMINI_INVALID_OR_BLOCKED_OUTPUT"])
+                if recoverable and last_call.get("stage") == "parse_request" and run.request_interpretation and not run.orders:
+                    run.specs, question = LLMExtractionService.restore_intent(run)
+                    run.clarification = Clarification(question=question or "Please confirm exact item specs using the structured editor; the last model response was not applied.")
+                    run.error = None
+                    transition(run,S.PARSING,"Recovered last validated request without another model call.")
+                    transition(run,S.WAITING_FOR_CLARIFICATION,run.clarification.question)
+                    save_run(c,run)
+                    return run
                 raise ValueError("Inspect run.error and configure the missing integration before creating a new run. Failed paid calls are not silently retried.")
             if run.state == S.WAITING_FOR_APPROVAL and (run.plan_version != fingerprint(run) or any(q.expires_at <= now() for q in run.quotes)):
                 transition(run, S.DECIDING, "Replanning changed/expired quote; approval invalidated.")

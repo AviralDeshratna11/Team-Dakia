@@ -21,6 +21,7 @@ class CrustdataClient:
         self.http = client or httpx.Client(base_url="https://api.crustdata.com", headers={
             "Authorization": "Bearer " + key, "x-api-version": "2025-11-01"}, timeout=30, follow_redirects=False)
         self.limit = Decimal(str(credit_limit))
+        self.run_limits = {}
         self.engine = create_engine("sqlite:///" + str(Path(journal_path).resolve()), connect_args={"check_same_thread": False, "timeout":30})
         self.permissions = None
         with self.engine.begin() as c:
@@ -38,6 +39,12 @@ class CrustdataClient:
 
     def credits(self):
         return self.free_get("/account/credits")
+
+    def set_run_limit(self, run_id, amount):
+        amount = Decimal(str(amount))
+        if not amount.is_finite() or amount < 0 or amount > 10:
+            raise ValueError("provider credit limit must be between 0 and 10")
+        self.run_limits[run_id] = amount
 
     def post(self, run_id, path, payload, units=1):
         if self.permissions is None:
@@ -57,7 +64,7 @@ class CrustdataClient:
                 raise IntegrationUnavailable("CRUSTDATA_PRIOR_CALL_UNRESOLVED: inspect provider credit journal; no automatic paid retry")
             rows = c.exec_driver_sql("SELECT reserved, charged FROM calls WHERE run_id=?", (run_id,)).all()
             committed = sum((Decimal(charged if charged is not None else amount) for amount, charged in rows), Decimal(0))
-            if committed + reserved > self.limit:
+            if committed + reserved > self.run_limits.get(run_id,self.limit):
                 c.rollback()
                 raise IntegrationUnavailable("CRUSTDATA_CREDIT_LIMIT: paid call blocked")
             c.exec_driver_sql("INSERT INTO calls VALUES(?,?,?,?,NULL,'pending',NULL,NULL)", (call_id, run_id, path, str(reserved)))

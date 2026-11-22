@@ -22,7 +22,7 @@ class ParsedItem(Contract):
 
 class ParsedIntent(Contract):
     summary: str = Field(max_length=2000)
-    category: Literal["electronics", "leather_goods"] | None = None
+    category: str | None = Field(default=None,max_length=100)
     request_type: Literal["purchase", "shortlist"] | None = None
     destination: str | None = None
     delivery_requirement: str | None = None

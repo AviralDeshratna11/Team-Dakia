@@ -1,0 +1,13 @@
+{
+  "name":"general", "version":"1", "spec_fields":["description","material","dimensions","grade","quantity","unit","certifications"],
+  "required_fields":["description","quantity for purchases","decision-changing specifications"],
+  "clarification_rules":["Ask for missing item requirements; never assume quantities or substitutions"],
+  "substitution_constraints":["Only substitutions explicitly permitted by the founder"],
+  "discovery_hints":["Official supplier sites","Manufacturer and service-provider catalogues"],
+  "trust_signals":["identity","stable","complaints_clear"],
+  "allowed_kinds":["manufacturer","distributor","retailer","trader","service_provider"],
+  "weights":{"identity":40,"stable":20,"stock":20,"complaints_clear":20},
+  "threshold":80,"freshness_hours":24,"ordering_method":"checkout",
+  "duty_bps":0,"tax_bps":0,"tax_base":"goods_shipping_duty","fx_to_inr":{"INR":"1"},
+  "research_cost_minor":4000,"research_max_order_bps":500,"cost_policy_confirmed":false
+}

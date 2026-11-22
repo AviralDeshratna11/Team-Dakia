@@ -1,5 +1,11 @@
 # Sourcing Desk
 
+## General sourcing and human assistance
+
+The main form now accepts any product or service, with optional free-text context instead of fixed category choices. Choose **Purchase plan** or **Supplier shortlist and RFQ drafts** independently. There is no preselected electronics supplier. Existing fixture catalogues remain limited offline examples.
+
+When verified sourcing cannot finish, a durable task appears in the **Human review inbox** and the run pauses in `WAITING_FOR_HUMAN`. A reviewer can revise and retry, record manual handling with a reference, or cancel. The same budgets, caches and payment identities are retained. Human-reported outcomes are separate from automated purchases; real payments and outside notifications are not implemented. See [the general sourcing and human-review workflow](docs/general-and-human-review.md).
+
 A local procurement-agent skeleton for founders who currently compare suppliers, verify companies and calculate landed costs themselves. It turns a reference electronics BOM into an auditable plan and simulated orders, or a leather-goods request into a manufacturer shortlist and unsent RFQ drafts.
 
 **Fixture mode uses synthetic companies, demo prices/taxes and simulated payments. Live mode supports Crustdata Identify and bounded Search/Fetch, with a default cap of 0.2 provider credits per run. Gemini can optionally parse user requirements and extract cited supplier insights; purchasing facts remain independently unverified.** RFQs stay drafts. No external vendor is contacted and no real money moves.
@@ -7,6 +13,10 @@ A local procurement-agent skeleton for founders who currently compare suppliers,
 See [live-test results and the minimal credit policy](docs/live-test.md). The first live connectivity run used 2.2 credits; the new identity-only test is capped at 0.2 and has not been rerun against the live API after the budget change.
 
 ## Gemini: two extraction stages
+
+**Configured locally with the supplied Vertex AI service account:** Google Gemini only, `gemini-2.5-flash`, location `global`. The external credential is not copied into the project. `scripts/start_worker.py` loads the ignored `.env` setup, and the model ID guard rejects non-Gemini models before authentication. Two actual Vertex extraction checks passed. See [Vertex setup and verification](docs/llm-layer.md).
+
+The dashboard defaults to **Live** and **Use Gemini** enabled. Keep a supplier domain and the default **0.2-credit** budget for the minimal identity test. To search for suppliers instead, clear the domain and explicitly choose a larger credit budget. The application never increases it automatically. Configure delivery/category/budget form fields consistently with the request text; conflicts require clarification. Fixture mode remains available for offline demos.
 
 Enable the Gemini checkbox in a new dashboard request to use an LLM for (1) parsing the founder's requirements and (2) extracting useful facts, summaries and gaps from Crustdata evidence. Outputs are validated and saved; model-derived facts never authorize spending or silently become verified quotes. Normally two model calls are made, with four attempts maximum per run and persistent response caching.
 
@@ -16,7 +26,7 @@ Stop any existing worker first. From `backend`, start a replacement with hidden 
 python ../scripts/start_worker.py --gemini --crustdata
 ```
 
-`GEMINI_API_KEY` and `CRUSTDATA_API_KEY` can alternatively be supplied through the worker environment. Optional `GEMINI_MODEL` defaults to `gemini-3.1-flash-lite`. Keep API and worker in the same working directory. The frontend never receives these keys. Fixture mode with Gemini off still needs no key. The Crustdata credit cap and Gemini token usage are separate; no real model test has been run without a Gemini key. See [LLM architecture, setup and limits](docs/llm-layer.md).
+For Vertex, set `GEMINI_BACKEND=vertex`, `GOOGLE_APPLICATION_CREDENTIALS` to the external JSON, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION=global`, and `GEMINI_MODEL=gemini-2.5-flash` in the ignored `.env`; no Gemini API-key prompt is needed. `CRUSTDATA_API_KEY` can be entered at the worker's hidden prompt. A separate `GEMINI_BACKEND=developer` configuration supports an actual `GEMINI_API_KEY`, but that route cannot use the service-account JSON. Keep API and worker in the same working directory. The frontend never receives these keys. Fixture mode with Gemini off still needs no key. The Crustdata credit budget and Gemini token usage are separate.
 
 ## Run locally
 

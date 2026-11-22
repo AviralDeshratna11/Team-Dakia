@@ -4,6 +4,7 @@ import json
 from urllib.parse import urlparse, parse_qs
 from app.contracts import Supplier, Quote, Evidence, now
 from app.config import pack_for
+from app.providers.interfaces import IntegrationUnavailable
 
 
 def supplier_url(url):
@@ -27,8 +28,8 @@ class LiveDiscovery:
 
     def discover(self, request, specs):
         # Search is grounded in the actual requested items; company matching is exact-domain.
-        query = (" ".join(s.description for s in specs) + " India buy distributor official catalogue" if request.category == "electronics" else
-                 "leather goods manufacturers Uttar Pradesh factory official website")
+        requirements = " ".join(s.description+" "+" ".join(f"{k}: {v}" for k,v in s.parameters.items()) for s in specs)
+        query = f"{requirements[:1500]} suppliers official website deliver to {request.destination}"
         evidence = []
         if request.supplier_domains:
             # Minimum-cost profile: user-selected domain -> Identify only. No search/fetch.
@@ -55,8 +56,20 @@ class LiveDiscovery:
             if len(domains) == 3: break
         if not domains:
             return [], [], evidence
-        identified = self.client.identify(self.run_id, domains)
-        fetched = [] if request.supplier_domains else self.client.fetch(self.run_id, pages[:2])
+        try:
+            identified = self.client.identify(self.run_id, domains)
+        except IntegrationUnavailable as exc:
+            if "CRUSTDATA_CREDIT_LIMIT" not in str(exc): raise
+            identified = []
+            evidence.append(Evidence(reference="https://api.crustdata.com/company/identify",provider="credit_policy",mode="live",status="unverified",
+                fact="identity resolution skipped",value="Remaining provider-credit budget cannot cover company identification. Search candidates remain unverified."))
+        try:
+            fetched = [] if request.supplier_domains else self.client.fetch(self.run_id, pages[:2])
+        except IntegrationUnavailable as exc:
+            if "CRUSTDATA_CREDIT_LIMIT" not in str(exc): raise
+            fetched = []
+            evidence.append(Evidence(reference="https://api.crustdata.com/web/enrich/live",provider="credit_policy",mode="live",status="unverified",
+                fact="page retrieval skipped",value="Remaining provider-credit budget cannot cover page retrieval. Identity evidence is preserved; purchasing facts remain unknown."))
         fetched_by_url = {r.get("url"):r for r in fetched if r.get("success") is True and r.get("url")}
         suppliers, quotes = [], []
         seen = set()

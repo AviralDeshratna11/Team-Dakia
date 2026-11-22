@@ -23,6 +23,8 @@ class FixtureParser:
             if "uttar pradesh" not in text:
                 return [], "This fixture supports Uttar Pradesh manufacturers. Confirm that location or provide a live adapter."
             return [Spec(id="leather-shortlist", description="Leather-goods manufacturer shortlist", parameters={"location": "Uttar Pradesh"})], None
+        if request.category not in {"electronics","leather_goods"}:
+            return [], "Provide each item's description, specifications and quantity in the structured editor, or enable Gemini for natural-language requests in any category."
         matched = [(key, desc, params) for key, (pattern, desc, params) in ITEMS.items() if re.search(pattern, text)]
         if not matched:
             return [], "Provide structured item specifications; the demo parser only recognizes ESP32-S3, the example LDO, 10uF 0805 capacitors and USB-C."

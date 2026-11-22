@@ -20,7 +20,10 @@ class FixtureDiscovery:
     """Synthetic companies and quotes; fixture verification is not real-world verification."""
     def discover(self, request, specs):
         pack = pack_for(request.category)
-        rows = json.loads(Path(__file__).with_name("catalog.json").read_text())[request.category]
+        rows = json.loads(Path(__file__).with_name("catalog.json").read_text()).get(request.category,[])
+        if not rows:
+            return [], [], [Evidence(reference="fixture://catalog/unsupported",provider="fixture_catalog",fact="demo coverage",status="unverified",
+                value="No synthetic supplier catalogue exists for this request. Use live data or a human reviewer; no suppliers have been invented.")]
         canonical, suppliers, quotes, evidence = {}, [], [], []
         for row in rows:
             key = row["canonical_id"] or row["id"]

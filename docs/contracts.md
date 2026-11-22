@@ -2,6 +2,8 @@
 
 Canonical models: `backend/app/contracts/models.py`. Machine-readable API contract: `docs/openapi.json`. Frontend types are generated from it using `npm run generate:api`.
 
+General workflow update: `SourcingRequest.category` is arbitrary descriptive text, default `general`; purchase and shortlist outcomes are independent of context. `human_review_enabled` defaults true. `WorkflowRun` includes `human_reviews` and `human_completed_spec_ids`. `HumanReviewTask` stores blockers, affected items, resume stage and audited reviewer resolution. New states are `WAITING_FOR_HUMAN` and `CANCELLED`; decisions may be `handled_by_human`, explicitly distinct from automated ordering. See `general-and-human-review.md` for `GET /api/human-reviews`, explicit escalation and resolution APIs. Unknown categories use the conservative general policy and do not inherit fabricated tax or supplier facts.
+
 Gemini contracts live in `backend/app/contracts/llm.py`: `ParsedIntent`/`ParsedItem` for request extraction and `SupplierExtraction`/`SupplierInsight`/`ExtractedFact` for provider evidence. Requests opt in using `llm_enabled`. Runs expose `request_interpretation`, `supplier_insights`, `extraction_warnings` and `llm_usage`. The dashboard displays these persisted outputs; the model never receives tools or permission to change executable budgets, company identity or order state.
 
 ## Model responsibilities

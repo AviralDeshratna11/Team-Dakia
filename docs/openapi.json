@@ -22,6 +22,135 @@
         }
       }
     },
+    "/api/human-reviews": {
+      "get": {
+        "summary": "Review Queue",
+        "operationId": "review_queue_api_human_reviews_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/HumanReviewTask"
+                  },
+                  "type": "array",
+                  "title": "Response Review Queue Api Human Reviews Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/runs/{run_id}/human-review": {
+      "post": {
+        "summary": "Request Review",
+        "operationId": "request_review_api_runs__run_id__human_review_post",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HumanReviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowRun"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/runs/{run_id}/human-reviews/{task_id}/resolve": {
+      "post": {
+        "summary": "Resolve Human Review",
+        "operationId": "resolve_human_review_api_runs__run_id__human_reviews__task_id__resolve_post",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HumanReviewResolution"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowRun"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/runs": {
       "get": {
         "summary": "Index",
@@ -846,7 +975,8 @@
               "selected",
               "no_eligible_supplier",
               "incomplete",
-              "clarification_needed"
+              "clarification_needed",
+              "handled_by_human"
             ],
             "title": "Outcome"
           },
@@ -967,6 +1097,293 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "HumanReviewRequest": {
+        "properties": {
+          "note": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 5,
+            "title": "Note"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "note"
+        ],
+        "title": "HumanReviewRequest"
+      },
+      "HumanReviewResolution": {
+        "properties": {
+          "reviewer": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 2,
+            "title": "Reviewer"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "retry",
+              "manual_completion",
+              "cancel"
+            ],
+            "title": "Action"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 5,
+            "title": "Note"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference"
+          },
+          "specs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Spec-Input"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Specs"
+          },
+          "request_text": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 10000,
+                "minLength": 5
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Text"
+          },
+          "supplier_domains": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supplier Domains"
+          },
+          "provider_credit_limit": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 10.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,2}0*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Credit Limit"
+          },
+          "destination": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 2
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination"
+          },
+          "deadline": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "reviewer",
+          "action",
+          "note"
+        ],
+        "title": "HumanReviewResolution"
+      },
+      "HumanReviewTask": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "resolved",
+              "cancelled"
+            ],
+            "title": "Status",
+            "default": "pending"
+          },
+          "reason_code": {
+            "type": "string",
+            "title": "Reason Code"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary"
+          },
+          "blockers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Blockers"
+          },
+          "spec_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Spec Ids"
+          },
+          "resume_state": {
+            "$ref": "#/components/schemas/RunState"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          },
+          "reviewer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewer"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "retry",
+                  "manual_completion",
+                  "cancel"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference"
+          },
+          "resolution_fingerprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution Fingerprint"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "run_id",
+          "status",
+          "reason_code",
+          "summary",
+          "blockers",
+          "spec_ids",
+          "resume_state",
+          "created_at",
+          "resolved_at",
+          "reviewer",
+          "resolution",
+          "note",
+          "reference",
+          "resolution_fingerprint"
+        ],
+        "title": "HumanReviewTask"
       },
       "LedgerEntry": {
         "properties": {
@@ -1389,10 +1806,12 @@
           "RESEARCHING",
           "DECIDING",
           "WAITING_FOR_APPROVAL",
+          "WAITING_FOR_HUMAN",
           "EXECUTING",
           "COMPLETED",
           "COMPLETED_WITH_GAPS",
-          "FAILED"
+          "FAILED",
+          "CANCELLED"
         ],
         "title": "RunState"
       },
@@ -1415,12 +1834,10 @@
           },
           "category": {
             "type": "string",
-            "enum": [
-              "electronics",
-              "leather_goods"
-            ],
+            "maxLength": 100,
+            "minLength": 1,
             "title": "Category",
-            "default": "electronics"
+            "default": "general"
           },
           "destination": {
             "type": "string",
@@ -1479,6 +1896,11 @@
             "title": "Llm Enabled",
             "default": false
           },
+          "human_review_enabled": {
+            "type": "boolean",
+            "title": "Human Review Enabled",
+            "default": true
+          },
           "supplier_domains": {
             "items": {
               "type": "string"
@@ -1486,6 +1908,21 @@
             "type": "array",
             "maxItems": 3,
             "title": "Supplier Domains"
+          },
+          "provider_credit_limit": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 10.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,2}0*$"
+              }
+            ],
+            "title": "Provider Credit Limit",
+            "default": "0.2"
           },
           "scenario": {
             "type": "string",
@@ -1527,12 +1964,10 @@
           },
           "category": {
             "type": "string",
-            "enum": [
-              "electronics",
-              "leather_goods"
-            ],
+            "maxLength": 100,
+            "minLength": 1,
             "title": "Category",
-            "default": "electronics"
+            "default": "general"
           },
           "destination": {
             "type": "string",
@@ -1591,6 +2026,11 @@
             "title": "Llm Enabled",
             "default": false
           },
+          "human_review_enabled": {
+            "type": "boolean",
+            "title": "Human Review Enabled",
+            "default": true
+          },
           "supplier_domains": {
             "items": {
               "type": "string"
@@ -1598,6 +2038,12 @@
             "type": "array",
             "maxItems": 3,
             "title": "Supplier Domains"
+          },
+          "provider_credit_limit": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,2}0*$",
+            "title": "Provider Credit Limit",
+            "default": "0.2"
           },
           "scenario": {
             "type": "string",
@@ -1627,7 +2073,9 @@
           "shortlist_count",
           "mode",
           "llm_enabled",
+          "human_review_enabled",
           "supplier_domains",
+          "provider_credit_limit",
           "scenario"
         ],
         "title": "SourcingRequest"
@@ -1828,6 +2276,8 @@
             "enum": [
               "manufacturer",
               "distributor",
+              "retailer",
+              "service_provider",
               "trader",
               "unknown"
             ],
@@ -2150,6 +2600,20 @@
             "type": "array",
             "title": "Extraction Warnings"
           },
+          "human_reviews": {
+            "items": {
+              "$ref": "#/components/schemas/HumanReviewTask"
+            },
+            "type": "array",
+            "title": "Human Reviews"
+          },
+          "human_completed_spec_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Human Completed Spec Ids"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -2181,6 +2645,8 @@
           "request_interpretation",
           "supplier_insights",
           "extraction_warnings",
+          "human_reviews",
+          "human_completed_spec_ids",
           "created_at"
         ],
         "title": "WorkflowRun"

@@ -14,8 +14,9 @@ from app.providers.live_discovery import LiveDiscovery
 from app.providers.interfaces import IntegrationUnavailable
 from app.providers.mock_checkout import MockPayments
 from app.services.specification_parser import FixtureParser
-from app.providers.gemini import GeminiClient
+from app.providers.gemini import GeminiClient, GeminiOutputError
 from app.services.llm_extraction import LLMExtractionService
+from app.services.human_review import open_review
 
 ACTIVE = {S.CREATED, S.PARSING, S.DISCOVERING, S.VERIFYING, S.RESEARCHING, S.DECIDING, S.EXECUTING}
 
@@ -49,9 +50,28 @@ class Orchestrator:
                 return run
             try:
                 self.advance(c, run)
+            except GeminiOutputError as exc:
+                if run.state == S.PARSING and exc.code in {"GEMINI_SCHEMA_INVALID","GEMINI_OUTPUT_TRUNCATED"}:
+                    run.specs, question = LLMExtractionService.restore_intent(run)
+                    run.clarification = Clarification(question=question or "Please confirm the item specifications using the structured editor; the latest model response could not be validated.")
+                    run.error = None
+                    transition(run,S.WAITING_FOR_CLARIFICATION,"Gemini output was invalid. Preserved the last valid requirements; no automatic paid retry. "+str(exc))
+                    if run.request.human_review_enabled:
+                        open_review(run,"MODEL_RESPONSE_INVALID","The model response could not be validated. A reviewer can supply structured requirements.",[str(exc)],resume_state=S.PARSING)
+                else:
+                    run.error = str(exc)
+                    if run.request.human_review_enabled:
+                        open_review(run,"MODEL_RESPONSE_BLOCKED",run.error,[run.error])
+                    else: transition(run,S.FAILED,run.error)
             except IntegrationUnavailable as exc:
                 run.error = str(exc)
-                transition(run, S.FAILED, run.error)
+                if run.request.human_review_enabled:
+                    open_review(run,"PROVIDER_UNAVAILABLE","Sourcing could not continue within the available provider access or budget.",[run.error])
+                else: transition(run, S.FAILED, run.error)
+            except Exception as exc:
+                if not run.request.human_review_enabled: raise
+                run.error = "SOURCING_OPERATION_FAILED: "+type(exc).__name__
+                open_review(run,"EXECUTION_FAILED","An operation failed; a reviewer must inspect the saved state before continuing.",[run.error])
             if run.request.mode == "live" and self.live_client is not None:
                 run.provider_usage = self.live_client.usage(run.id)
             if run.request.llm_enabled and self.llm_client is not None:
@@ -64,7 +84,7 @@ class Orchestrator:
         if run.state == S.CREATED:
             transition(run, S.PARSING, "Gemini request parsing enabled." if run.request.llm_enabled else "Reading the request with the bounded reference/structured parser; Gemini disabled for this run.")
         elif run.state == S.PARSING:
-            if run.request.llm_enabled:
+            if run.request.llm_enabled and not (run.request.specs and run.request_interpretation):
                 run.specs, question = self.llm().parse(run)
             else:
                 run.specs, question = FixtureParser().parse(run.request)
@@ -77,6 +97,7 @@ class Orchestrator:
             if run.request.mode == "live":
                 if self.live_client is None:
                     self.live_client = CrustdataClient(journal_path=self.db.path + ".credits.db")
+                self.live_client.set_run_limit(run.id,run.request.provider_credit_limit)
                 provider = LiveDiscovery(self.live_client, run.id)
             else:
                 provider = FixtureDiscovery()
@@ -90,15 +111,21 @@ class Orchestrator:
             transition(run, S.VERIFYING, "Canonical company IDs merged; source timestamps saved." + (" Provider retries exhausted; quote facts remain unverified." if attempts == 3 else ""))
         elif run.state == S.VERIFYING:
             if run.request.llm_enabled:
-                self.llm().extract(run)
-                run.events.append(WorkflowEvent(state=run.state, message="Gemini provider evidence extraction saved with cited claims and explicit gaps. LLM claims do not authorize purchases."))
+                try:
+                    self.llm().extract(run)
+                    run.events.append(WorkflowEvent(state=run.state, message="Gemini provider evidence extraction saved with cited claims and explicit gaps. LLM claims do not authorize purchases."))
+                except (GeminiOutputError,IntegrationUnavailable) as exc:
+                    recoverable = (isinstance(exc,GeminiOutputError) and exc.code != "GEMINI_OUTPUT_BLOCKED") or "GEMINI_CALL_LIMIT" in str(exc)
+                    if not recoverable: raise
+                    run.extraction_warnings.append("Supplier insight generation unavailable: "+str(exc)+". Raw evidence retained; no model claims applied or automatic paid retry.")
+                    run.events.append(WorkflowEvent(state=run.state,message=run.extraction_warnings[-1]))
             run.checks = []
             for supplier in run.suppliers:
                 quote = next(q for q in run.quotes if q.supplier_id == supplier.id)
                 run.checks.append(SupplierCheck(supplier_id=supplier.id, kind="identity", result="pass" if supplier.identity == "resolved" else "unverified",
                     reason=f"{run.request.mode} canonical identity resolved." if supplier.identity == "resolved" else "No matching company evidence; this does not prove fraud.", evidence_ids=quote.evidence_ids))
-                trust = "authorized" if "authorized" in pack.trust_signals else "factory"
-                value = quote.signals.get(trust)
+                trust = next((signal for signal in ["authorized","factory"] if signal in pack.trust_signals),"supplier_type")
+                value = quote.signals.get(trust) if trust != "supplier_type" else supplier.kind in pack.allowed_kinds
                 run.checks.append(SupplierCheck(supplier_id=supplier.id, kind=trust, result="pass" if value is True else "fail" if value is False else "unverified",
                     reason="Synthetic combined trust evidence; hiring alone is not conclusive." if run.request.mode == "fixture" else "Category trust signal not yet verified by live evidence; identity alone is insufficient.", evidence_ids=quote.evidence_ids))
             transition(run, S.RESEARCHING, "Supplier checks saved. Evaluating decision-changing gaps.")
@@ -108,6 +135,12 @@ class Orchestrator:
             transition(run, S.DECIDING, "Research complete or budget unavailable; uncertainty retained.")
         elif run.state == S.DECIDING:
             self.build_plan(run, pack)
+            blocked = [d for d in run.decisions if d.outcome not in {"selected","handled_by_human"} or (run.request.request_type == "shortlist" and d.outcome != "handled_by_human" and len(d.selected_supplier_ids) < run.request.shortlist_count)]
+            if blocked and run.request.human_review_enabled:
+                reasons = sorted({reason for d in blocked for candidate in d.candidates for reason in candidate.reason_codes})
+                if not reasons: reasons = ["NO_ELIGIBLE_SUPPLIER_OR_INSUFFICIENT_SHORTLIST"]
+                open_review(run,"NO_PURCHASABLE_PLAN","The requested items cannot be sourced with the available verified evidence. Human help is required.",reasons,[d.spec_id for d in blocked],S.DECIDING)
+                return
             needs_approval = any(o.state == "PLANNED" for o in run.orders)
             transition(run, S.WAITING_FOR_APPROVAL if needs_approval else S.EXECUTING,
                        "Plan saved; exact amounts require approval." if needs_approval else "Plan saved; executing mock orders or preparing RFQ drafts.")
@@ -127,7 +160,7 @@ class Orchestrator:
             if pending:
                 self.order_step(c, run, pending)
                 return
-            if pack.ordering_method == "rfq":
+            if run.request.request_type == "shortlist" or pack.ordering_method == "rfq":
                 for decision in run.decisions:
                     for supplier_id in decision.selected_supplier_ids:
                         draft_id = f"{run.id}:{decision.spec_id}:{supplier_id}"
@@ -135,8 +168,9 @@ class Orchestrator:
                             spec = next(s for s in run.specs if s.id == decision.spec_id)
                             run.rfqs.append(RFQDraft(id=draft_id, supplier_id=supplier_id, subject="RFQ: " + spec.description,
                                 body=f"Please provide capabilities, MOQ, pricing, material/finish options, certifications and delivery lead time to {run.request.destination}. Requested scope: {run.request.text}. This is a draft; details must be confirmed before ordering."))
-            gaps = any(d.outcome != "selected" for d in run.decisions) or (run.request.request_type == "shortlist" and any(len(d.selected_supplier_ids) < run.request.shortlist_count for d in run.decisions))
-            transition(run, S.COMPLETED_WITH_GAPS if gaps else S.COMPLETED, "Finished with explicit gaps." if gaps else "Finished: mock payments reconciled; RFQs remain drafts.")
+            gaps = any(d.outcome not in {"selected","handled_by_human"} for d in run.decisions) or (run.request.request_type == "shortlist" and any(d.outcome != "handled_by_human" and len(d.selected_supplier_ids) < run.request.shortlist_count for d in run.decisions))
+            message = "Finished with explicit gaps." if gaps else ("Finished; reviewer-reported manual handling is recorded separately from automated orders." if run.human_completed_spec_ids else "Finished: mock payments reconciled; RFQs remain drafts.")
+            transition(run, S.COMPLETED_WITH_GAPS if gaps else S.COMPLETED,message)
 
     def research_step(self, c, run, pack):
         suppliers = {s.id: s for s in run.suppliers}
@@ -192,6 +226,11 @@ class Orchestrator:
     def build_plan(self, run, pack):
         suppliers = {s.id: s for s in run.suppliers}
         run.decisions = [decide(s, run.quotes, suppliers, run.request, pack) for s in run.specs]
+        for index, decision in enumerate(run.decisions):
+            if decision.spec_id in run.human_completed_spec_ids:
+                evidence_ids = ["human:"+task.id for task in run.human_reviews if task.resolution == "manual_completion" and decision.spec_id in task.spec_ids]
+                run.decisions[index] = decision.model_copy(update={"outcome":"handled_by_human","selected_quote_id":None,"selected_supplier_ids":[],
+                    "evidence_ids":evidence_ids,"explanation":"A reviewer reported manual handling with a reference. No automated payment is claimed for this item."})
         run.plan_version = fingerprint(run)
         paid = [o for o in run.orders if o.state == "PAID"]
         run.orders = paid

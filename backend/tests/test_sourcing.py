@@ -18,7 +18,7 @@ from app.workflow.orchestrator import Orchestrator, approve, ACTIVE
 
 
 def request(**changes):
-    return SourcingRequest.model_validate({"text":"Source ESP32-S3 modules, 500 of each", "deadline":now()+timedelta(days=21), "approval_threshold_minor":100000000, **changes})
+    return SourcingRequest.model_validate({"text":"Source ESP32-S3 modules, 500 of each", "category":"electronics", "human_review_enabled":False, "deadline":now()+timedelta(days=21), "approval_threshold_minor":100000000, **changes})
 
 
 @pytest.fixture
