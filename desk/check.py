@@ -56,21 +56,6 @@ def _check_one(vendor: str, domain: str, seller_domain: str, dist: dict, pack: d
                      signals=[Signal(name="real_company", value="no company record", ok=False,
                                      weight=w["real_company"], source=src)],
                      reason=f"{seller_domain} doesn't resolve to any company")
-    if company_id is None or not seller_domain.startswith("crustdata-"):
-        # Confidence is 1.0 even for wrong matches (amazon.in -> 'Indian.amazon', 'BioLaughs'), so the
-        # company must list this domain as its own, and all such matches must be the same company.
-        owned = [m for m in good if seller_domain in _domains(m["company_data"])]
-        ids = {m["company_data"].get("crustdata_company_id") for m in owned}
-        if len(ids) != 1:
-            names = ", ".join((m["company_data"].get("basic_info") or {}).get("name") or "?" for m in good[:3])
-            why = (f"{len(ids)} different companies list {seller_domain} as their own ({names})" if ids
-                   else f"Crustdata matched {seller_domain} to {names}, but none lists it as its own domain")
-            return Check(**base, company_id=None, company_name=None, status="UNVERIFIED", score=None,
-                         signals=[Signal(name="real_company", value=why, ok=None, weight=w["real_company"],
-                                         source=src)],
-                         reason=f"can't tell which company is behind {seller_domain}: {why}")
-        good = owned
-
     co = good[0]["company_data"]
     info = co.get("basic_info") or {}
     cid = co.get("crustdata_company_id")

@@ -95,6 +95,24 @@ def digikey(html: str) -> dict | None:
     return jsonld_fallback(html, "digikey:json-ld")
 
 
+def digikey_search(html: str) -> dict | None:
+    """DigiKey's keyword page when there's no exact product: how many products match, in which
+    categories, and its 'did you mean' part number."""
+    data = (((next_data(html) or {}).get("props") or {}).get("pageProps") or {}).get("envelope", {}).get("data") or {}
+    if "productCount" not in data:
+        return None
+
+    def leaves(cats):
+        for c in cats or []:
+            if c.get("subCategories"):
+                yield from leaves(c["subCategories"])
+            elif c.get("productCount"):
+                yield f"{c.get('label')} ({c.get('productCount')})"
+    count = int(num(data.get("productCount")) or 0)
+    return {"product_count": count, "categories": list(leaves(data.get("categories"))) if count else [],
+            "suggestion": ((data.get("suggestion") or {}).get("suggestedKeyword") or "").upper() or None}
+
+
 # ---------- LCSC ----------
 
 def lcsc_product(html: str) -> dict | None:

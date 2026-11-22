@@ -81,6 +81,10 @@ def show(records: list[dict]) -> None:
             for f in o["founder_review"]:
                 print(f"    FOR FOUNDER: {f['vendor']} {f['maker']} {f['mpn']} landed ₹{f['landed_inr']} "
                       f"{f['flags']} -> {f['ask']}")
+        if r["step"] == "05b_consolidate" and o:
+            for d in o:
+                if d["status"] == "PICKED" and "ships with" in d["reason"]:
+                    print(f"SHIPPING [{d['line_id']}] " + d["reason"].split("; ships with")[-1].strip())
         if r["step"] == "06_order" and o:
             print(f"ORDER [{r['part']}] {o['state']} {o['vendor']} ₹{o['amount_inr']:,.2f} key {o['idempotency_key']}"
                   + (f" - HELD: {o['held_reason']}" if o["held_reason"] else "")

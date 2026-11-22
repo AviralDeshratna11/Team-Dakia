@@ -138,6 +138,7 @@ class FindResult(BaseModel):
     reason: str
     quotes: list[Quote]              # quotes for our exact part (any status but NO_MATCH)
     alternatives: list[Quote]        # other parts seen on the way: substitute candidates
+    suggested_mpns: list[str] = []   # distributors' "did you mean" part numbers
     leads: list[Lead]
 
 

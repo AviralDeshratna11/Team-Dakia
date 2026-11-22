@@ -102,6 +102,10 @@ def _find_one(spec: Spec, pack: dict, cd: Crustdata) -> FindResult:
         else:
             quotes.append(_quote(spec, d, pages[d["name"]], pack))
 
+    suggested = sorted({q.mpn for q in quotes if q.status == Status.NOT_FOUND and q.mpn})
+    for q in quotes:
+        if q.status == Status.NOT_FOUND:
+            q.mpn = None
     exact = [q for q in quotes if q.status != Status.NO_MATCH]
     alternatives = [q for q in quotes if q.status == Status.NO_MATCH]
     leads = _discover(spec, pack, cd)
@@ -111,7 +115,7 @@ def _find_one(spec: Spec, pack: dict, cd: Crustdata) -> FindResult:
     reason = "; ".join(f"{q.vendor}: {q.status.value}" + (f" ({q.note})" if q.note else "")
                        + (" [FLAGGED]" if q.flags else "") for q in quotes)
     return FindResult(line_id=spec.line_id, mpn=spec.mpn, maker=spec.maker, status=best, reason=reason,
-                      quotes=exact, alternatives=alternatives, leads=leads)
+                      quotes=exact, alternatives=alternatives, leads=leads, suggested_mpns=suggested)
 
 
 def _quote(spec: Spec, dist: dict, page: dict, pack: dict) -> Quote:
@@ -121,6 +125,16 @@ def _quote(spec: Spec, dist: dict, page: dict, pack: dict) -> Quote:
     if fn is None:
         return _bare(spec, dist, page, Status.GAP, "no extractor for this site yet")
     fields = fn(page.get("content") or "")
+    if fields is None and dist.get("extractor") == "digikey":
+        found = extract.digikey_search(page.get("content") or "")
+        if found and found["product_count"] == 0:
+            q = _bare(spec, dist, page, Status.NOT_FOUND, f"{dist['name']} doesn't list it"
+                      + (f"; it suggests {found['suggestion']}" if found["suggestion"] else ""))
+            q.mpn = found["suggestion"]          # carried to suggested_mpns, not quoted
+            return q
+        if found:
+            return _bare(spec, dist, page, Status.NO_MATCH,
+                         f"no exact product; {found['product_count']} matches only in: {', '.join(found['categories'][:3])}")
     if fields is None:
         return _bare(spec, dist, page, Status.NO_MATCH, "no product data on page (no exact match?)")
 
@@ -250,7 +264,7 @@ def decide(spec: Spec, find: FindResult, checks: list[Check], pack: dict,
     review = [{**r, "ask": (f"Cheaper than the pick by ₹{round(best[2].total_inr - r['landed_inr'], 2)}, but flagged. "
                             "Accept it?" if best else "The only option left, but flagged. Accept it?")}
               for r in review if best is None or r["landed_inr"] < best[2].total_inr]
-    substitutes = sorted({q.mpn for q in find.alternatives if q.mpn})
+    substitutes = sorted({q.mpn for q in find.alternatives if q.mpn} | set(find.suggested_mpns))
 
     waiting = [q for q in find.quotes if q.note.startswith("RFQ ")]
     if best is None and not review and waiting:
@@ -283,6 +297,40 @@ def decide(spec: Spec, find: FindResult, checks: list[Check], pack: dict,
         reason += f"; {len(review)} cheaper flagged option(s) sent to the founder"
     return Decision(line_id=spec.line_id, status="PICKED", rule=rule, picked=q, landed=lc, total_inr=lc.total_inr,
                     reason=reason, founder_review=review, rejected=rejected, considered=considered)
+
+
+def consolidate_shipping(decisions: list[Decision], pack: dict) -> list[Decision]:
+    """Step 5b: lines picked from the same vendor ship together. One shipping fee per vendor (free if the
+    vendor's combined order clears its threshold), split across the lines by goods value; duty and GST
+    recomputed. (Per-line picks aren't revisited: a vendor that gets cheaper once combined isn't re-chosen.)"""
+    cfg = pack["landed_cost"]
+    dists = {d["domain"]: d for d in pack["distributors"]}
+    groups: dict[str, list[Decision]] = {}
+    for d in decisions:
+        if d.status == "PICKED" and d.picked and d.landed:
+            groups.setdefault(d.picked.vendor_domain, []).append(d)
+    for domain, ds in groups.items():
+        dist = dists.get(domain) or pack.get("unknown_vendor", {})
+        goods = sum(d.landed.goods_inr for d in ds)
+        free_over = dist.get("free_shipping_over_inr")
+        fee = 0.0 if free_over is not None and goods >= free_over else float(dist.get("shipping_inr") or 0)
+        imported = dist.get("ships_from") != cfg["destination_country"]
+        for d in ds:
+            lc = d.landed
+            ship = fee * lc.goods_inr / goods if goods else 0.0
+            duty = cfg["import_duty_rate"] * (lc.goods_inr + ship) if imported else 0.0
+            gst = cfg["gst_rate"] * (lc.goods_inr + ship + duty)
+            total = lc.goods_inr + ship + duty + gst
+            need = round(lc.total_inr / lc.per_unit_inr) if lc.per_unit_inr else 1
+            saved = round(lc.total_inr - total, 2)
+            d.landed = lc.model_copy(update={"shipping_inr": round(ship, 2), "duty_inr": round(duty, 2),
+                                             "gst_inr": round(gst, 2), "total_inr": round(total, 2),
+                                             "per_unit_inr": round(total / need, 4)})
+            d.total_inr = d.landed.total_inr
+            if len(ds) > 1:
+                d.reason += (f"; ships with {len(ds) - 1} other line(s) from {d.picked.vendor}: one ₹{fee:,.0f} "
+                             f"shipping fee shared, landed now ₹{d.total_inr:,.2f} (saves ₹{saved:,.2f})")
+    return decisions
 
 
 def landed_cost(q: Quote, need_qty: int, dist: dict, pack: dict) -> LandedCost:
