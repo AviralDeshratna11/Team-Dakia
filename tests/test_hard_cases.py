@@ -104,7 +104,7 @@ def test_01_clean_pick_is_cited_and_paid_once(pack, spec, real_sellers):
     checks = check_suppliers([f], pack, FakeCrustdata(real_sellers))
     d = steps.decide(spec, f, checks, pack, DEADLINE)
     assert d.status == "PICKED" and d.picked.vendor == "LCSC"
-    assert "https://lcsc.com/p/AP2112K-3.3TRG1" in d.reason and "fetched 2026-11-22" in d.reason
+    assert "https://lcsc.com/p/AP2112K-3.3TRG1" in d.reason and "fetched " in d.reason
     assert d.landed.total_inr > d.landed.goods_inr                      # shipping + duty + GST included
     o1 = orders.place_order(d, "req1", approval_limit_inr=50_000)
     o2 = orders.place_order(d, "req1", approval_limit_inr=50_000)
@@ -256,8 +256,9 @@ def test_10_leather_makers_found_checked_rfqd_and_quoted(monkeypatch):
             rep = {"action": "SENT", "quote": None, "missing": [], "note": ""}
         else:
             rep = {"action": "QUOTED", "missing": [], "note": "", "quote": {
-                "currency": "INR", "unit_price": 1150, "moq": 100, "lead_time_days": 25, "ships_to_india": True,
-                "valid_until": None, "payment_terms": "on delivery", "vendor_words": "INR 1150, MOQ 100, 25 days"}}
+                "currency": "INR", "unit_price": 1150, "moq": 100, "lead_time_days": 25, "delivery_days": 30,
+                "ships_to_india": True, "valid_until": None, "payment_terms": "on delivery",
+                "vendor_words": "INR 1150, MOQ 100, 25 days, delivered to Bengaluru in 30 days"}}
         return AgentResult(agent=name, task=task, finished=True, stop_reason="finished", report=rep, turns=1,
                            credits=0, llm_calls=1, llm_cached=0, transcript=[])
     monkeypatch.setattr(rfq, "run_agent", fake_agent)
@@ -265,7 +266,8 @@ def test_10_leather_makers_found_checked_rfqd_and_quoted(monkeypatch):
     out = pipeline.rfq_step("req10", [spec], [f], checks, leather, "Bengaluru", DEADLINE)
     assert sorted(t["status"] for t in out) == ["SENT", "SENT"]
     first = rfq.threads("req10")[0]
-    rfq.vendor_reply(first.thread_id, "Price INR 1150 per piece, MOQ 100, lead time 25 days, payment on delivery.")
+    rfq.vendor_reply(first.thread_id, "Price INR 1150 per piece, MOQ 100, lead time 25 days, delivered to "
+                                      "Bengaluru within 30 days, payment on delivery.")
     pipeline.rfq_step("req10", [spec], [f], checks, leather, "Bengaluru", DEADLINE)
     d = steps.decide(spec, f, checks, leather, DEADLINE)
     assert d.status == "PICKED" and d.picked.found_by == "rfq" and d.picked.unit_price_inr == 1150
@@ -291,3 +293,77 @@ def test_payment_key_reused_with_different_amount_is_refused():
     gw.create_intent("k1", 100.0, "LCSC", "card")
     with pytest.raises(ValueError):
         gw.create_intent("k1", 120.0, "LCSC", "card")
+
+
+# ---------- gaps found after the benchmark fixes (probed on main) ----------
+
+def test_zero_price_is_never_usable(pack, spec):
+    q = steps.assess_quote(quote(price_inr=0.0), spec, pack)
+    assert q.status == Status.GAP
+
+
+def test_zero_amount_payment_is_refused():
+    with pytest.raises(ValueError, match="positive"):
+        payments.provider().create_intent("zero", 0.0, "LCSC", "card")
+
+
+def test_stale_quote_goes_to_the_founder(pack, spec, real_sellers):
+    from datetime import datetime, timezone
+    old = quote()
+    old.fetched_at = datetime.now(timezone.utc) - timedelta(hours=pack["max_quote_age_hours"] + 1)
+    f = priced(spec, pack, old)
+    d = steps.decide(spec, f, check_suppliers([f], pack, FakeCrustdata(real_sellers)), pack, DEADLINE)
+    assert d.status == "NEEDS_FOUNDER" and "re-check before buying" in d.founder_review[0]["flags"][-1]
+
+
+def test_quote_without_citation_is_never_picked(pack, spec, real_sellers):
+    f = priced(spec, pack, quote())
+    f.quotes[0].url = ""
+    d = steps.decide(spec, f, check_suppliers([f], pack, FakeCrustdata(real_sellers)), pack, DEADLINE)
+    assert d.status == "NEEDS_FOUNDER" and any("no citation" in x for x in d.founder_review[0]["flags"])
+
+
+def test_assumed_arrival_for_unlisted_vendor_with_deadline_goes_to_founder(pack, spec):
+    sellers = {"newvendor.example": {"id": 7, "name": "New Vendor"}}
+    f = priced(spec, pack, quote("New Vendor", "newvendor.example", 8.0, ships_to_india=True))
+    d = steps.decide(spec, f, check_suppliers([f], pack, FakeCrustdata(sellers)), pack, DEADLINE)
+    assert d.status == "NEEDS_FOUNDER" and any("arrival only assumed" in x for x in d.founder_review[0]["flags"])
+    assert steps.decide(spec, f, check_suppliers([f], pack, FakeCrustdata(sellers)), pack, None).status == "PICKED"
+
+
+def test_a_line_is_never_bought_twice_when_a_rerun_picks_another_vendor(pack, spec, real_sellers):
+    cd = FakeCrustdata(real_sellers)
+    f1 = priced(spec, pack, quote("LCSC", "lcsc.com", 8.0))
+    d1 = steps.decide(spec, f1, check_suppliers([f1], pack, cd), pack, DEADLINE)
+    assert orders.place_order(d1, "req-x", approval_limit_inr=50_000).state == "PAID"
+    f2 = priced(spec, pack, quote("DigiKey India", "digikey.in", 7.0))     # prices changed: DigiKey wins now
+    d2 = steps.decide(spec, f2, check_suppliers([f2], pack, cd), pack, DEADLINE)
+    assert d2.picked.vendor == "DigiKey India"
+    o = orders.place_order(d2, "req-x", approval_limit_inr=50_000)
+    assert o.vendor == "LCSC" and o.state == "PAID"                          # the line was already bought
+    assert len(orders.list_orders()) == 1 and len(payments.provider().intents()) == 1
+
+
+def test_unpaid_order_is_superseded_when_a_rerun_picks_another_vendor(pack, spec, real_sellers):
+    cd = FakeCrustdata(real_sellers)
+    f1 = priced(spec, pack, quote("LCSC", "lcsc.com", 8.0))
+    d1 = steps.decide(spec, f1, check_suppliers([f1], pack, cd), pack, DEADLINE)
+    held = orders.place_order(d1, "req-y", approval_limit_inr=100)          # held above the limit
+    assert held.state == "PLANNED" and held.held_reason
+    f2 = priced(spec, pack, quote("DigiKey India", "digikey.in", 7.0))
+    d2 = steps.decide(spec, f2, check_suppliers([f2], pack, cd), pack, DEADLINE)
+    new = orders.place_order(d2, "req-y", approval_limit_inr=50_000)
+    assert new.vendor == "DigiKey India" and new.state == "PAID"
+    assert orders.get_order(held.idempotency_key).state == "SUPERSEDED"
+    assert orders.approve(held.idempotency_key).state == "SUPERSEDED"       # approving it can't revive it
+
+
+def test_runs_started_in_the_same_second_get_separate_folders():
+    from desk.trace import Run
+    assert Run("same").dir != Run("same").dir
+
+
+def test_old_rfq_quotes_without_delivery_days_still_load():
+    assert rfq.RfqQuote.model_validate({"currency": "INR", "unit_price": 1, "moq": 1, "lead_time_days": 1,
+                                        "ships_to_india": True, "valid_until": None, "payment_terms": None,
+                                        "vendor_words": "x"}).delivery_days is None

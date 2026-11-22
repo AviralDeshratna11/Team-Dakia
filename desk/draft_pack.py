@@ -92,6 +92,7 @@ def draft_pack(category: str, request_text: str, cd: Crustdata, base: dict) -> t
         "trust_signals": d.trust_signals,
         "typical_moq": d.typical_moq,
         "factory_signal": FACTORY_SIGNAL,
+        "max_quote_age_hours": 72,
         "investigate": {"leads_per_part": 0},
         "unknown_vendor": {"ships_from": "IN", "transit_days": 7, "shipping_inr": 1500, "free_shipping_over_inr": None},
         "reliability": {**base["reliability"], "min_score": 0.5,

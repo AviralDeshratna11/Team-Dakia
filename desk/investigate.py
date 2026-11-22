@@ -110,20 +110,22 @@ def investigate_leads(spec: Spec, find: FindResult, pack: dict, cd: Crustdata) -
     agents, quotes = [], []
     for lead in picked:
         pages: dict[str, PageQuote] = {}
+        seen: dict = {"domains": set(), "fetched_at": {}}     # what the tools actually fetched
         result = run_agent(
             "seller_investigator", SYSTEM,
             TASK.format(mpn=spec.mpn, maker=spec.maker or "any", qty=spec.qty, ref=ref_text,
                         title=lead.title, url=lead.url, snippet=lead.snippet),
-            _tools(cd, spec, pages), InvestigationReport,
+            _tools(cd, spec, pages, seen), InvestigationReport,
             max_turns=cfg.get("max_turns", 8), credit_budget=cfg.get("credit_budget", 8))
         agents.append(result)
-        q = _to_quote(spec, lead, result, pages, pack, known)
+        q = _to_quote(spec, lead, result, pages, seen, pack, known)
         if q:
             quotes.append(q)
     return InvestigateResult(line_id=spec.line_id, agents=agents, quotes=quotes, skipped=skipped)
 
 
-def _to_quote(spec: Spec, lead: Lead, result: AgentResult, pages: dict, pack: dict, known: set) -> Quote | None:
+def _to_quote(spec: Spec, lead: Lead, result: AgentResult, pages: dict, seen: dict, pack: dict,
+              known: set) -> Quote | None:
     """Code, not the agent, turns the evidence into a quote."""
     from desk.steps import assess_quote  # late import: steps imports this module
 
@@ -133,12 +135,15 @@ def _to_quote(spec: Spec, lead: Lead, result: AgentResult, pages: dict, pack: di
     domain = rep.seller_domain.lower().removeprefix("www.")
     if domain in known or extract.is_google_redirect(domain):
         return None                  # a catalogue distributor (already quoted) or unresolved
-    page = pages.get(rep.product_url or "") or next(iter(pages.values()), None)
+    url = rep.product_url if rep.product_url in pages else next(iter(pages), None)
+    page = pages.get(url) if url else None
     q = Quote(line_id=spec.line_id, vendor=rep.seller_name or domain, vendor_domain=domain,
-              url=rep.product_url or lead.url, fetched_at=datetime.now(timezone.utc), status=Status.FOUND,
+              url=url or lead.url, fetched_at=seen["fetched_at"].get(url), status=Status.FOUND,
               extracted_by="agent:read_product_page", found_by="agent", seller_type=rep.seller_type,
               ships_to_india=rep.ships_to_india, evidence=rep.evidence,
               flags=[f"agent: {f}" for f in rep.red_flags])
+    if not any(domain == d or domain.endswith("." + d) or d.endswith("." + domain) for d in seen["domains"]):
+        q.flags.append(f"seller domain {domain} doesn't match any page the agent fetched")
     if rep.sells_exact_part is False and (page is None or not page.is_product_page):
         q.status, q.note = Status.NO_MATCH, "seller doesn't have the exact part"
         return q
@@ -153,12 +158,20 @@ def _to_quote(spec: Spec, lead: Lead, result: AgentResult, pages: dict, pack: di
 
 # ---------- tools ----------
 
-def _tools(cd: Crustdata, spec: Spec, pages: dict) -> list[Tool]:
+def _tools(cd: Crustdata, spec: Spec, pages: dict, seen: dict) -> list[Tool]:
+    def note(url: str | None, html: str, page: dict) -> None:
+        for u in (url, page.get("url"), _real_url(html)):
+            if u and not extract.is_google_redirect(u):
+                seen["domains"].add(extract.domain(u))
+        if url and page.get("timestamp"):
+            seen["fetched_at"][url] = datetime.fromtimestamp(page["timestamp"], timezone.utc)
+
     def fetch_page(url: str) -> dict:
         page = cd.fetch([url])[0]
         html = page.get("content") or ""
         if extract.is_blocked(page.get("title"), html):
             return {"blocked": True, "title": page.get("title")}
+        note(url, html, page)
         return {"title": page.get("title"), "real_url": _real_url(html) or page.get("url"),
                 "real_domain": extract.domain(_real_url(html) or page.get("url") or url),
                 "part_mentioned": spec.mpn.lower() in html.lower(), "text": _text(html, spec.mpn, 2500)}
@@ -168,6 +181,7 @@ def _tools(cd: Crustdata, spec: Spec, pages: dict) -> list[Tool]:
         html = page.get("content") or ""
         if extract.is_blocked(page.get("title"), html):
             return {"blocked": True}
+        note(url, html, page)
         pq = llm.ask("Extract the product offer on this page. Only facts on the page; null if absent. "
                      f"We want part {spec.mpn}.\n\nTITLE: {page.get('title')}\nURL: {url}\n\n"
                      + _text(html, spec.mpn, 9000), PageQuote)

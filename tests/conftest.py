@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -36,7 +36,7 @@ def spec():
 def quote(vendor="LCSC", domain="lcsc.com", price_inr=10.0, stock=10_000, mpn="AP2112K-3.3TRG1",
           maker="Diodes Incorporated", **kw) -> Quote:
     q = Quote(line_id="ldo", vendor=vendor, vendor_domain=domain, url=f"https://{domain}/p/{mpn}",
-              fetched_at=datetime(2026, 11, 22, 8, 0, tzinfo=timezone.utc), status=Status.FOUND, mpn=mpn,
+              fetched_at=datetime.now(timezone.utc) - timedelta(hours=1), status=Status.FOUND, mpn=mpn,
               manufacturer=maker, stock=stock, moq=1,
               tiers=[PriceTier(min_qty=1, unit_price=price_inr, currency="INR")], **kw)
     return q

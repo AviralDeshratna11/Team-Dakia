@@ -110,7 +110,8 @@ class Quote(BaseModel):
     params: dict[str, str] = {}
     flags: list[str] = []            # e.g. possible clone: shown to the founder, never auto-picked
     found_by: str = "catalogue"      # "catalogue" (fixed recipe), "agent" (investigated lead) or "rfq"
-    lead_time_days: int | None = None    # from an RFQ: the vendor's committed lead time
+    lead_time_days: int | None = None    # from an RFQ: the vendor's committed lead time (production)
+    delivery_days: int | None = None     # from an RFQ: days until delivered to us, if the vendor says so
     company_id: int | None = None    # Crustdata id, when the seller was found by Company Search
     seller_type: str | None = None   # from the agent: manufacturer, authorized_distributor, marketplace, ...
     ships_to_india: bool | None = None   # from the agent; catalogue vendors use the pack instead
@@ -174,7 +175,9 @@ class LandedCost(BaseModel):
     gst_inr: float
     total_inr: float
     per_unit_inr: float              # total / qty needed
+    need_qty: int                    # what the founder needs (buy_qty may be more, if MOQ forces it)
     arrives_by: date | None
+    arrival_basis: str               # pack (distributor's configured transit) | vendor (said so) | assumed | unknown
     placeholder_rates: bool          # True while pack rates are unverified placeholders
 
 
@@ -194,7 +197,7 @@ class Decision(BaseModel):
 
 # ---------- step 6: order ----------
 
-ORDER_STATES = ["PLANNED", "APPROVED", "PAY_PENDING", "PAID"]
+ORDER_STATES = ["PLANNED", "APPROVED", "PAY_PENDING", "PAID", "SUPERSEDED"]
 
 
 class Order(BaseModel):
@@ -206,7 +209,8 @@ class Order(BaseModel):
     mpn: str
     qty: int
     amount_inr: float
-    state: str                       # PLANNED -> APPROVED -> PAY_PENDING -> PAID
+    state: str                       # PLANNED -> APPROVED -> PAY_PENDING -> PAID; unpaid orders can become
+                                     # SUPERSEDED when a later run picks another vendor for the same line
     held_reason: str | None = None   # why it's waiting (e.g. above the approval limit)
     payment_id: str | None = None
     events: list[str] = []           # state history, oldest first

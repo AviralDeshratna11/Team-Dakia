@@ -114,3 +114,4 @@ factory_signal:
   - founder
   - partner
   - manager
+max_quote_age_hours: 72

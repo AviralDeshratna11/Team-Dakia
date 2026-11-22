@@ -160,17 +160,20 @@ def assess_quote(q: Quote, spec: Spec, pack: dict) -> Quote:
         q.status, q.note = Status.FOUND_UNFIT, "doesn't ship to India"
     elif q.stock is not None and q.stock < q.buy_qty:
         q.status, q.note = Status.FOUND_UNFIT, f"stock {q.stock} < purchase quantity {q.buy_qty}"
-    elif q.stock is None and q.lead_time_days is None:
+    elif q.stock is None and q.lead_time_days is None and q.delivery_days is None:
         q.status, q.note = Status.GAP, "stock not on page"
     elif q.stock is None:
-        q.note = f"no stock figure; vendor commits to {q.lead_time_days} days lead time"
+        q.note = "no stock figure; vendor commits to " + (
+            f"delivery in {q.delivery_days} days" if q.delivery_days is not None
+            else f"{q.lead_time_days} days lead time")
     elif q.buy_qty and q.buy_qty > spec.qty:
         q.note = f"MOQ forces buying {q.buy_qty}"
     return q
 
 
 def _valid_price(price: float | None) -> bool:
-    return price is not None and isfinite(price) and price >= 0
+    """A real price: finite and above zero (a ₹0 or negative price on a page is a parsing or listing error)."""
+    return price is not None and isfinite(price) and price > 0
 
 
 def _price_at_qty(q: Quote, qty: int, fx: dict) -> None:
@@ -237,13 +240,17 @@ def decide(spec: Spec, find: FindResult, checks: list[Check], pack: dict,
     1. seller doesn't resolve to a real company          -> reject
     2. doesn't ship to India, or can't arrive by deadline -> reject
     3. below the reliability bar                          -> reject, shown as "cheaper but untrusted"
-    4. check couldn't run, or quote is flagged (clone)    -> never picked silently: founder review
+    4. never picked silently on missing or doubtful evidence -> founder review: a flagged quote (clone,
+       agent red flag), an unverified seller, no evidence of shipping to India, an arrival that's only
+       assumed when there's a deadline, no citation, or a price observed too long ago
     5. among the rest                                     -> lowest landed cost
     """
     rule = "real company > ships in time > reliability bar > unflagged > lowest landed cost"
     by_domain = {c.vendor_domain: c for c in checks}
     dists = {d["domain"]: d for d in pack["distributors"]}
     min_score = pack["reliability"]["min_score"]
+    max_age_h = pack.get("max_quote_age_hours", 72)
+    now = datetime.now(timezone.utc)
     considered, rejected, ok, review = [], [], [], []
 
     for q in find.quotes:
@@ -260,8 +267,9 @@ def decide(spec: Spec, find: FindResult, checks: list[Check], pack: dict,
             considered.append(_row(q, None, None, f"not a usable quote: {issue}"))
             continue
         c = by_domain.get(q.vendor_domain)
+        known = q.vendor_domain in dists
         d = dists.get(q.vendor_domain) or {**pack.get("unknown_vendor", {}), "ships_to_india": q.ships_to_india}
-        lc = landed_cost(q, spec.qty, d, pack)
+        lc = landed_cost(q, spec.qty, d, pack, assumed_transit=not known)
         row = _row(q, c, lc, "")
         considered.append(row)
         if c is None or c.status == "REJECTED":
@@ -274,12 +282,24 @@ def decide(spec: Spec, find: FindResult, checks: list[Check], pack: dict,
             rejected.append({**row, "rule": "misses the deadline", "why": f"arrives {lc.arrives_by}, need {deadline}"})
         elif c.score is not None and c.score < min_score:
             rejected.append({**row, "rule": "cheaper but untrusted", "why": f"score {c.score} < {min_score}: {c.reason}"})
-        elif c.status == "UNVERIFIED" or q.flags or d.get("ships_to_india") is None:
-            review.append({**row, "flags": q.flags
-                           + ([f"unverified seller: {c.reason}"] if c.status == "UNVERIFIED" else [])
-                           + (["no evidence it ships to India"] if d.get("ships_to_india") is None else [])})
         else:
-            ok.append((q, c, lc))
+            # never picked silently on missing or doubtful evidence: these go to the founder
+            flags = list(q.flags)
+            if c.status == "UNVERIFIED":
+                flags.append(f"unverified seller: {c.reason}")
+            if d.get("ships_to_india") is None:
+                flags.append("no evidence it ships to India")
+            if deadline and lc.arrival_basis == "assumed":
+                flags.append(f"arrival only assumed ({lc.arrives_by}, default transit for an unlisted vendor) "
+                             f"against a {deadline} deadline")
+            if not q.url or q.fetched_at is None:
+                flags.append("no citation: quote has no source URL or observation time")
+            elif (age_h := (now - _utc(q.fetched_at)).total_seconds() / 3600) > max_age_h:
+                flags.append(f"price observed {age_h:.0f}h ago (limit {max_age_h}h): re-check before buying")
+            if flags:
+                review.append({**row, "flags": flags})
+            else:
+                ok.append((q, c, lc))
 
     best = min(ok, key=lambda t: t[2].total_inr) if ok else None
     review = [{**r, "ask": (f"Cheaper than the pick by ₹{round(best[2].total_inr - r['landed_inr'], 2)}, but flagged. "
@@ -308,7 +328,7 @@ def decide(spec: Spec, find: FindResult, checks: list[Check], pack: dict,
 
     q, c, lc = best
     reason = (f"{q.vendor}: {q.manufacturer or ''} {q.mpn}, {q.buy_qty} x ₹{q.unit_price_inr} -> landed ₹{lc.total_inr:,.2f} "
-              f"(₹{lc.per_unit_inr}/unit, arrives by {lc.arrives_by}); seller {c.company_name}, score {c.score}; "
+              f"(₹{lc.per_unit_inr}/unit, arrives by {lc.arrives_by}, {lc.arrival_basis}); seller {c.company_name}, score {c.score}; "
               f"stock {q.stock}; source {q.url} fetched {q.fetched_at:%Y-%m-%d %H:%M} UTC")
     if lc.placeholder_rates:
         reason += "; shipping/duty/GST rates are placeholders"
@@ -342,11 +362,10 @@ def consolidate_shipping(decisions: list[Decision], pack: dict) -> list[Decision
             duty = cfg["import_duty_rate"] * (lc.goods_inr + ship) if imported else 0.0
             gst = cfg["gst_rate"] * (lc.goods_inr + ship + duty)
             total = lc.goods_inr + ship + duty + gst
-            need = round(lc.total_inr / lc.per_unit_inr) if lc.per_unit_inr else 1
             saved = round(lc.total_inr - total, 2)
             d.landed = lc.model_copy(update={"shipping_inr": round(ship, 2), "duty_inr": round(duty, 2),
                                              "gst_inr": round(gst, 2), "total_inr": round(total, 2),
-                                             "per_unit_inr": round(total / need, 4)})
+                                             "per_unit_inr": round(total / lc.need_qty, 4)})
             d.total_inr = d.landed.total_inr
             if len(ds) > 1:
                 d.reason += (f"; ships with {len(ds) - 1} other line(s) from {d.picked.vendor}: one ₹{fee:,.0f} "
@@ -354,8 +373,14 @@ def consolidate_shipping(decisions: list[Decision], pack: dict) -> list[Decision
     return decisions
 
 
-def landed_cost(q: Quote, need_qty: int, dist: dict, pack: dict) -> LandedCost:
-    """goods + shipping + import duty (if shipped from abroad) + GST, all in INR."""
+def _utc(t: datetime) -> datetime:
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+def landed_cost(q: Quote, need_qty: int, dist: dict, pack: dict, assumed_transit: bool = False) -> LandedCost:
+    """goods + shipping + import duty (if shipped from abroad) + GST, all in INR. Arrival: the vendor's own
+    delivery time if it gave one; else stock/lead time + the distributor's transit from the pack; for a
+    vendor not in the pack that transit is a default, so the arrival is only "assumed"."""
     cfg = pack["landed_cost"]
     goods = q.unit_price_inr * q.buy_qty
     free_over = dist.get("free_shipping_over_inr")
@@ -364,19 +389,23 @@ def landed_cost(q: Quote, need_qty: int, dist: dict, pack: dict) -> LandedCost:
     duty = cfg["import_duty_rate"] * (goods + shipping) if imported else 0.0
     gst = cfg["gst_rate"] * (goods + shipping + duty)
     total = goods + shipping + duty + gst
-    days = dist.get("transit_days")
-    if days is not None and q.lead_time_days:
-        days += q.lead_time_days
+    days, basis = dist.get("transit_days"), "unknown"
+    if q.delivery_days is not None:
+        days, basis = q.delivery_days, "vendor"
+    elif days is not None:
+        days += q.lead_time_days or 0
+        basis = "assumed" if assumed_transit else "pack"
     return LandedCost(goods_inr=round(goods, 2), shipping_inr=round(shipping, 2), duty_inr=round(duty, 2),
                       gst_inr=round(gst, 2), total_inr=round(total, 2), per_unit_inr=round(total / need_qty, 4),
-                      arrives_by=date.today() + timedelta(days=days) if days is not None else None,
-                      placeholder_rates=bool(cfg.get("placeholder_rates")))
+                      need_qty=need_qty, arrives_by=date.today() + timedelta(days=days) if days is not None else None,
+                      arrival_basis=basis, placeholder_rates=bool(cfg.get("placeholder_rates")))
 
 
 def _row(q: Quote, c: Check | None, lc: LandedCost | None, note: str) -> dict:
     return {"vendor": q.vendor, "found_by": q.found_by, "mpn": q.mpn, "maker": q.manufacturer, "status": q.status.value,
             "unit_price_inr": q.unit_price_inr, "buy_qty": q.buy_qty,
             "landed_inr": lc.total_inr if lc else None, "arrives_by": str(lc.arrives_by) if lc and lc.arrives_by else None,
+            "arrival_basis": lc.arrival_basis if lc else None,
             "seller_score": c.score if c else None, "seller_status": c.status if c else None,
             "flags": q.flags, "note": note or q.note, "url": q.url}
 

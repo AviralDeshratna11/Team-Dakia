@@ -140,6 +140,30 @@ Agents gather facts and draft; code decides.
 
 ---
 
+## 2026-11-22 · Benchmark findings: fixed on main, and the gaps after them (Sid)
+
+- **The team's benchmark** (`docs/sid-benchmark.md`) found 4 failures in `desk` at `73a757c`. Aviral fixed them in `912984e`:
+  - atomic payment transactions, with repair of earlier debits
+  - negative prices rejected
+  - purchase quantity of at least the MOQ, and stock checked against it
+  - unknown arrival with a deadline rejected
+- **The archived benchmark now runs as `tests/test_benchmark_sid.py`** with no expected failures. Its interruption test needed the new `_save(intent, db)` signature; as archived it fails with a `TypeError` rather than finding a bug.
+- **Probing `main` afterwards found 7 more gaps in `desk`, all now fixed with tests:**
+  - a ₹0 price counted as valid; ₹0 orders and payments were allowed
+  - **a line could be bought twice** when a re-run picked another vendor (a different order key)
+  - cached quotes never aged
+  - quotes without a citation could be auto-bought
+  - arrival for unlisted vendors came from a default transit but counted as known
+  - agent-reported seller domains were never checked against fetched pages
+  - runs in the same second shared a folder
+- **Checking the tests catch them:** with the zero-price and buy-twice bugs put back, their tests fail.
+- **Backend, after `912984e`:**
+  - Fixed: negative price.
+  - Still open (its known failures): missing citations, stale observations, USB-C cable vs. connector.
+  - Two more found by probing, **not fixed here** (backend code): a ₹0 price is eligible (total ₹0), and an unreviewed quote whose delivery date is already past is eligible.
+
+---
+
 ## Later (not now)
 
 - When data is missing or blocked, pay third-party data services for it.

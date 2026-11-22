@@ -88,6 +88,10 @@ reliability:
   min_score: 0.6
   weights: {real_company: 3, age: 1, size: 1, growth: 1, web_traffic: 1, authorized: 2}
 
+# Step 5: a quote observed longer ago than this is never bought automatically (founder re-checks it).
+# Cached pages keep their original fetch time, so re-run with --no-cache to refresh old prices.
+max_quote_age_hours: 72
+
 # Step 5: landed cost = goods + shipping + import duty + GST. PLACEHOLDER rates.
 landed_cost:
   destination_country: IN

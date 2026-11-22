@@ -87,19 +87,39 @@ def order_key(request_key: str, decision: Decision) -> str:
 
 def place_order(decision: Decision, request_key: str, approval_limit_inr: float,
                 method: str = "card") -> Order | None:
-    """method: card (vendor checkout) or bank_transfer (RFQ vendors are paid against their invoice)."""
+    """method: card (vendor checkout) or bank_transfer (RFQ vendors are paid against their invoice).
+
+    One live order per (request, line): if a later run picks another vendor for a line that's already
+    being paid or paid, that order is finished (never a second purchase of the line); unpaid orders for
+    other vendors are SUPERSEDED by the new pick."""
     if decision.status != "PICKED" or decision.picked is None:
         return None
-    if decision.total_inr is None or not isfinite(decision.total_inr) or decision.total_inr < 0:
-        raise ValueError("Order total must be finite and non-negative")
+    if decision.total_inr is None or not isfinite(decision.total_inr) or decision.total_inr <= 0:
+        raise ValueError("Order total must be finite and positive")
     q = decision.picked
     key = order_key(request_key, decision)
+    others = [x for x in list_orders(request_key)
+              if x.line_id == decision.line_id and x.idempotency_key != key and x.state != "SUPERSEDED"]
+    started = [x for x in others if x.state in ("PAY_PENDING", "PAID")]
+    if started:
+        return _advance(started[0], approval_limit_inr, method)
+    for x in others:
+        x.state, x.held_reason = "SUPERSEDED", None
+        _save(x, f"superseded: this run picks {q.vendor} for the line (order {key})")
+
     o = get_order(key)
     if o is None:
         o = _save(Order(idempotency_key=key, request_key=request_key, line_id=decision.line_id, vendor=q.vendor,
                         vendor_domain=q.vendor_domain, mpn=q.mpn, qty=q.buy_qty, amount_inr=decision.total_inr,
                         state="PLANNED"), f"planned from decision: {decision.reason[:120]}")
+    elif o.state == "SUPERSEDED":
+        o.state, o.held_reason = "PLANNED", None
+        _save(o, "planned again: this run picks this vendor again")
+    return _advance(o, approval_limit_inr, method)
 
+
+def _advance(o: Order, approval_limit_inr: float, method: str) -> Order:
+    """Move an order forward from its saved state: approve, then pay exactly once."""
     if o.state == "PAID":
         return o
     if o.state == "PLANNED":

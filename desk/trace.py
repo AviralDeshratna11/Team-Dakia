@@ -37,7 +37,7 @@ def to_jsonable(obj: Any) -> Any:
 
 class Run:
     def __init__(self, name: str):
-        self.id = datetime.now().strftime("%Y%m%d-%H%M%S") + f"_{name}"
+        self.id = datetime.now().strftime("%Y%m%d-%H%M%S-%f") + f"_{name}"   # microseconds: runs never share a folder
         self.dir = RUNS_DIR / self.id
         self.dir.mkdir(parents=True, exist_ok=True)
         self.records: list[dict] = []

@@ -54,7 +54,9 @@ class RfqQuote(BaseModel):
     currency: str                    # ISO code
     unit_price: float                # at our quantity
     moq: int | None
-    lead_time_days: int | None
+    lead_time_days: int | None       # production / dispatch time
+    delivery_days: int | None = None # days until delivered to our city, only if the vendor says so
+                                     # (default: threads saved before this field existed)
     ships_to_india: bool | None
     valid_until: str | None
     payment_terms: str | None
@@ -73,7 +75,8 @@ SYSTEM = """You run request-for-quote email threads for a company in India, as "
   MOQ, lead time, delivery to our city in India (and cost), payment terms, and how long the quote is valid.
 - Never commit to buying or paying, never mention a budget, and never invent facts about us.
 - When the vendor's reply has the price, currency and lead time, finish with action QUOTED and copy the
-  numbers exactly as the vendor wrote them, with their exact words in vendor_words.
+  numbers exactly as the vendor wrote them, with their exact words in vendor_words. Put a delivery time to
+  our city in delivery_days only if the vendor states one; otherwise leave it null.
 - If something important is missing and you may still follow up, send ONE email asking only for what's
   missing, then finish with action FOLLOWED_UP.
 - Record payment terms exactly as the vendor states them (e.g. an advance); code flags those for the founder.
@@ -198,7 +201,7 @@ def _unsupported(q: RfqQuote, vendor_texts: list[str]) -> str | None:
     """Every number the agent recorded must appear in what the vendor wrote."""
     text = " ".join(vendor_texts).replace(",", "")
     nums = {float(n) for n in re.findall(r"\d+(?:\.\d+)?", text)}
-    for name in ("unit_price", "moq", "lead_time_days"):
+    for name in ("unit_price", "moq", "lead_time_days", "delivery_days"):
         v = getattr(q, name)
         if v is not None and float(v) not in nums:
             return f"{name}={v} isn't in the vendor's email"
@@ -209,9 +212,12 @@ def quote_from(t: RfqThread, spec: Spec, fx: dict) -> Quote | None:
     if t.status != "QUOTED" or not t.quote:
         return None
     rq = RfqQuote.model_validate(t.quote)
+    replies = [m.at for m in t.messages if m.direction == "in"]
+    observed = datetime.fromisoformat(replies[-1]).astimezone(timezone.utc) if replies else None   # local -> UTC
     q = Quote(line_id=t.line_id, vendor=t.vendor, vendor_domain=t.vendor_domain, url=f"rfq:{t.thread_id}",
-              fetched_at=datetime.now(timezone.utc), status=Status.FOUND, found_by="rfq", mpn=spec.mpn,
-              manufacturer=spec.maker, moq=rq.moq, lead_time_days=rq.lead_time_days, ships_to_india=rq.ships_to_india,
+              fetched_at=observed, status=Status.FOUND, found_by="rfq", mpn=spec.mpn,
+              manufacturer=spec.maker, moq=rq.moq, lead_time_days=rq.lead_time_days,
+              delivery_days=rq.delivery_days, ships_to_india=rq.ships_to_india,
               tiers=[PriceTier(min_qty=rq.moq or 1, unit_price=rq.unit_price, currency=rq.currency.upper())],
               evidence=[f"vendor's email: {rq.vendor_words}"])
     terms = (rq.payment_terms or "").lower()

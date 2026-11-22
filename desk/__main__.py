@@ -79,7 +79,7 @@ def show(records: list[dict]) -> None:
         if r["step"] == "05_decide" and o:
             print(f"DECIDE [{r['part']}] {o['status']}: {o['reason']}")
             for f in o["founder_review"]:
-                print(f"    FOR FOUNDER: {f['vendor']} {f['maker']} {f['mpn']} landed ₹{f['landed_inr']} "
+                print(f"    FOR FOUNDER: {f['vendor']} {f['maker'] or ''} {f['mpn']} landed ₹{f['landed_inr']} "
                       f"{f['flags']} -> {f['ask']}")
         if r["step"] == "05b_consolidate" and o:
             for d in o:

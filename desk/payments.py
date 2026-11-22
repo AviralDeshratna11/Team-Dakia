@@ -207,6 +207,8 @@ class MockGateway:
     def create_intent(self, idempotency_key: str, amount_inr: float, payee: str, method: str,
                       metadata: dict | None = None) -> tuple[Intent, bool]:
         _check_amount(amount_inr)
+        if amount_inr == 0:
+            raise ValueError("Payment amount must be positive")
         amount_inr = round(amount_inr, 2)
         with _write() as db:
             row = db.execute("SELECT data FROM intents WHERE idempotency_key = ?", (idempotency_key,)).fetchone()

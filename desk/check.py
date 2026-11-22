@@ -105,7 +105,8 @@ def _check_one(vendor: str, domain: str, seller_domain: str, dist: dict, pack: d
         signals.append(sig)
 
     checked = [s for s in signals if s.ok is not None]
-    score = round(sum(s.weight for s in checked if s.ok) / sum(s.weight for s in signals), 3)
+    total_weight = sum(s.weight for s in signals)
+    score = round(sum(s.weight for s in checked if s.ok) / total_weight, 3) if total_weight else 0.0
     missing = [s.name for s in signals if s.ok is None]
     failed = [f"{s.name} ({s.value})" for s in signals if s.ok is False]
     hq = ((e or {}).get("locations") or {}).get("headquarters")
