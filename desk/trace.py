@@ -85,4 +85,5 @@ def load_run(run: str | Path | None = None) -> list[dict]:
     path = Path(run) if run else list_runs()[0]
     if not path.is_absolute() and not path.exists():
         path = RUNS_DIR / path
-    return [json.loads(p.read_text()) for p in sorted(path.glob("*.json"))]
+    files = sorted(path.glob("*.json"), key=lambda p: p.stat().st_mtime_ns)   # execution order
+    return [json.loads(p.read_text()) for p in files]

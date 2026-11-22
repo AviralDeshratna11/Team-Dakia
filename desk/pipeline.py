@@ -3,27 +3,59 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 import yaml
 
 from desk import steps
 from desk.crustdata import Crustdata
-from desk.schemas import Request
+from desk.schemas import Question, Request, SpecResult
 from desk.trace import Run
+
+# Asks the founder one question and returns the answer (input() on the CLI and in the notebook).
+Ask = Callable[[Question], str]
 
 
 def load_request(path: str | Path) -> Request:
     return Request(**yaml.safe_load(Path(path).read_text()))
 
 
-def run(request_path: str | Path, use_cache: bool = True) -> Run:
+def clarify_specs(r: Run, req: Request, packs: dict, ask: Ask | None) -> SpecResult | None:
+    """Step 1 as a gate: nothing vague reaches step 2.
+
+    Round 1 reads the request. If anything is unclear, all questions go to the founder at once,
+    and round 2 re-reads the whole request with the answers and may not ask again: anything still
+    open gets the most common choice, listed in assumptions. A line that still comes back without a
+    part is dropped (reported, never guessed). Returns None if questions are pending and
+    there's no one to ask (e.g. a non-interactive run): add the answers to the request and re-run.
+    """
+    sr = r.step("01_spec", steps.understand_specs, req, packs, part="round1")
+    if not sr.questions:
+        return sr
+    if ask is None:
+        r.record("01_clarify", {"status": "WAITING_FOR_FOUNDER", "questions": sr.questions})
+        return None
+
+    answers = [f"Q: {q.question} A: {ask(q).strip()}" for q in sr.questions]
+    r.record("01_clarify", {"status": "ANSWERED", "questions": sr.questions, "answers": answers})
+    req = req.model_copy(update={"answers": req.answers + answers})
+    sr = r.step("01_spec", steps.understand_specs, req, packs, final=True, part="round2")
+    if sr.questions:
+        sr.assumptions.append("still unclear after the founder's answers, so not searched: "
+                              + "; ".join(f"[{q.line_id or 'request'}] {q.question}" for q in sr.questions))
+    return sr
+
+
+def run(request_path: str | Path, use_cache: bool = True, ask: Ask | None = None) -> Run:
     req = load_request(request_path)
     packs = steps.load_packs()
     cd = Crustdata(use_cache=use_cache)
     r = Run(Path(request_path).stem)
 
     r.record("00_request", req)
-    sr = r.step("01_spec", steps.understand_specs, req, packs)
+    sr = clarify_specs(r, req, packs, ask)
+    if sr is None or sr.units is None:
+        return r
     pack, specs = packs[sr.category], sr.specs
     finds = [r.step("02_find", steps.find_suppliers, s, pack, cd, part=s.line_id) for s in specs]
     checks = r.step("03_check", steps.check_suppliers, finds)

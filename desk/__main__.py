@@ -3,6 +3,7 @@ python -m desk show [run_id]          # latest run if omitted
 """
 
 import argparse
+import sys
 
 import pandas as pd
 
@@ -17,9 +18,17 @@ def show(records: list[dict]) -> None:
     print(view.steps(records).to_string(index=False))
     print()
     for r in records:
+        if r["step"] == "01_clarify":
+            o = r["output"]
+            print(f"CLARIFY: {o['status']}")
+            for a in o.get("answers", []):
+                print(f"  {a}")
+            if o["status"] == "WAITING_FOR_FOUNDER":
+                print("  Stopped before step 2. Answer in a terminal, or add `answers:` to the request file.")
+            print()
         if r["step"] == "01_spec" and r["output"]:
             o = r["output"]
-            print(f"SPEC ({o['parsed_by']}): {o['category']}, {o['units']} units -> {o['deliver_to']} "
+            print(f"SPEC {r['part'] or ''} ({o['parsed_by']}): {o['category']}, {o['units']} units -> {o['deliver_to']} "
                   f"by {o['deadline']}, data budget ₹{o['data_budget_inr']}")
             for s in o["specs"]:
                 alts = ", ".join(a["mpn"] for a in s["alternates"])
@@ -41,6 +50,11 @@ def show(records: list[dict]) -> None:
                       f"{f['flags']} -> {f['ask']}")
 
 
+def ask_founder(q) -> str:
+    print(f"\nQUESTION [{q.line_id or 'request'}]: {q.question}")
+    return input("> ")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(prog="desk")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -52,7 +66,7 @@ def main() -> None:
     a = p.parse_args()
 
     if a.cmd == "run":
-        run = pipeline.run(a.request, use_cache=not a.no_cache)
+        run = pipeline.run(a.request, use_cache=not a.no_cache, ask=ask_founder if sys.stdin.isatty() else None)
         print(f"run: {run.dir}\n")
         show(run.records)
     else:

@@ -68,20 +68,29 @@ Rules:
   (e.g. "a small regulator" with no voltage or current), leave candidates empty and write ONE short
   clarifying_question for that line. Don't ask about anything that wouldn't change which part to buy.
 - assumptions: everything you assumed that the text doesn't say.
+- If the founder has answered a question, use the answer as a fact and don't ask about it again.
 
 Request:
 {text}
-{answers}"""
+{answers}{final}"""
+
+FINAL_PASS = """
+This is the final pass: the founder has answered once and won't be asked again. Do not ask any
+question (clarifying_question and question must be null) and give candidates for every line. Where
+something is still open, choose the most common option consistent with the request and the answers,
+and record each such choice in assumptions."""
 
 
-def understand_specs(req: Request, packs: dict[str, dict]) -> SpecResult:
+def understand_specs(req: Request, packs: dict[str, dict], final: bool = False) -> SpecResult:
+    """final=True is round 2 of the clarification gate: the model may not ask again."""
     if req.lines:
         return _manual(req)
 
     answers = ("\nFounder's answers to earlier questions:\n" + "\n".join(req.answers)) if req.answers else ""
     hints = " ".join(p.get("spec_hint", "") for p in packs.values())
     parsed = llm.ask(PROMPT.format(today=date.today().isoformat(), categories=", ".join(packs),
-                                   spec_hint=hints, text=req.text.strip(), answers=answers), _Parsed)
+                                   spec_hint=hints, text=req.text.strip(), answers=answers,
+                                   final=FINAL_PASS if final else ""), _Parsed)
 
     category = req.category or parsed.category
     if category not in packs:
