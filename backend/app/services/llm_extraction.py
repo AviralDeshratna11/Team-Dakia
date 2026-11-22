@@ -84,6 +84,7 @@ class LLMExtractionService:
             specs = request.specs
         else:
             specs = []
+            unstated = set()  # items the model gave no quantity for (not ones it contradicted)
             for index, item in enumerate(intent.items):
                 quantity = item.quantity
                 if quantity is not None and (not item.quantity_excerpt or item.quantity_excerpt not in request.text):
@@ -100,6 +101,16 @@ class LLMExtractionService:
                 sid = hashlib.sha256(json.dumps([index,item.description,parameters],sort_keys=True).encode()).hexdigest()[:16]
                 specs.append(Spec(id=sid,description=item.description,part_number=item.part_number,parameters=parameters,
                     quantity=quantity,unit=item.unit,substitutes=item.substitutes,unresolved_questions=item.missing_fields))
+                if item.quantity is None: unstated.add(sid)
+        # One quantity stated for everything ("for 5,000 units", "500 of each") applies to any item
+        # the model left without one. Plain code over the founder's own words; never a guess.
+        # A quantity the model stated but the text contradicts still triggers a question below.
+        if request.request_type == "purchase" and not request.specs and any(s.id in unstated for s in specs):
+            stated = {int(n.replace(",", "")) for n in re.findall(r"(?<![\w.])(\d[\d,]*)\s*(?:units?|pcs|pieces|nos|sets|of each)\b", request.text, re.I)}
+            if len(stated) == 1:
+                quantity = stated.pop()
+                for s in specs:
+                    if s.quantity is None and s.id in unstated: s.quantity = quantity
         question = intent.clarification_question
         # Chat has no form: adopt a request type or destination stated in the text instead of asking.
         if intent.request_type in {"purchase", "shortlist"} and intent.request_type != request.request_type:
@@ -107,7 +118,9 @@ class LLMExtractionService:
         if intent.destination:
             parsed_destination = intent.destination.lower().strip()
             form_destination = request.destination.lower().strip()
-            if parsed_destination not in form_destination and form_destination not in parsed_destination:
+            # Adopt the text's destination unless the current one already says as much
+            # (e.g. keep "Bengaluru, India" over "India", but replace "India" with "Bengaluru").
+            if parsed_destination not in form_destination:
                 request.destination = intent.destination
         if question and (len(question.strip()) < 12 or question.strip().lower() in {"specifications","specs"}): question = None
         if not specs: question = question or "Which items or suppliers should I source?"
@@ -129,10 +142,13 @@ class LLMExtractionService:
         if not provider_quotes:
             return
         supplier_ids = {q.supplier_id for q in provider_quotes}
+        # Share a fixed character budget across evidence records so many suppliers still fit
+        # the model's input limit instead of failing the whole extraction.
+        per_record = max(600, min(6000, 42000 // max(1, len(by_id))))
         data = {"specs":[s.model_dump(mode="json") for s in run.specs if not follow_up or s.id == follow_up.spec_id],
                 "suppliers":[s.model_dump(mode="json") for s in run.suppliers if not follow_up or s.id in supplier_ids],
                 "quotes":[{"supplier_id":q.supplier_id,"spec_id":q.spec_id,"evidence_ids":q.evidence_ids} for q in provider_quotes],
-                "evidence":[{"id":e.id,"provider":e.provider,"reference":e.reference,"content":source_text(e)[:6000]} for e in by_id.values()]}
+                "evidence":[{"id":e.id,"provider":e.provider,"reference":e.reference,"content":source_text(e)[:per_record]} for e in by_id.values()]}
         stage = "extract_follow_up_evidence" if follow_up else "extract_provider_evidence"
         extraction = self.client.generate(run.id, stage, EVIDENCE_PROMPT, data, SupplierExtraction)
         suppliers = {s.id:s for s in run.suppliers}

@@ -142,3 +142,6 @@
 .ev-item .ev-src { color: #8a9a90; text-transform: capitalize; }
 .ev-item a { color: #2f7a57; display: inline-flex; gap: 3px; align-items: center; }
 .ev-item code { margin-top: 0; }
+.found-item { margin: 10px 0 4px; }
+.found-item h4 { margin: 0 0 2px; font-size: 14px; font-weight: 600; color: #2f4a3d; }
+.found-item ul { margin-top: 2px; }

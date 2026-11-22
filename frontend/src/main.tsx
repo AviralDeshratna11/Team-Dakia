@@ -17,7 +17,28 @@ const examples = [
   'Source ESP32-S3 modules, a 3.3V 500mA SOT-23 LDO regulator, 10uF 0805 capacitors and USB-C connectors. 500 of each, delivered to Bengaluru within three weeks.',
 ];
 const leatherWords = /leather|tanner|handbag|wallet|belt|footwear|shoe|saddle|bags?\b/i;
-const electronicsWords = /esp32|ldo|regulator|capacitor|usb|resistor|connector|module|pcb|bom|chip|ic\b|mcu|sensor/i;
+const electronicsWords = /\b(?:esp32(?:-s3)?|ldo|capacitors?|resistors?|usb-?c|pcbs?|bom|mcus?|microcontrollers?|voltage regulators?|smd)\b/i;
+
+// Terms the founder states in plain words ("ask me before any order over ₹40,000",
+// "keep data spend under ₹1,000", "within 5 weeks") become the run's hard limits.
+const AMOUNT = String.raw`(?:₹|rs\.?|inr)\s*([\d,]+(?:\.\d+)?)\s*(lakhs?|lacs?|crores?|cr|k|thousand)?\b`;
+function rupees(num: string, unit?: string) {
+  const n = Number(num.replace(/,/g, ''));
+  const u = (unit ?? '').toLowerCase();
+  return n * (/^(lakh|lac)/.test(u) ? 1e5 : /^(crore|cr)/.test(u) ? 1e7 : /^(k|thousand)$/.test(u) ? 1e3 : 1);
+}
+function readTerms(text: string) {
+  const approval = new RegExp(String.raw`(?:ask|check with|confirm with|consult)\s+me\s+before\s+(?:any\s+|an?\s+)?(?:orders?|purchases?|spend(?:ing)?|payments?)\s+(?:over|above|exceeding|of more than|greater than|more than)\s+` + AMOUNT, 'i').exec(text)
+    ?? new RegExp(String.raw`approv\w*\s+(?:required\s+|needed\s+)?(?:for\s+(?:any\s+)?orders?\s+)?(?:over|above)\s+` + AMOUNT, 'i').exec(text);
+  const data = new RegExp(String.raw`(?:data|research)\s+(?:spend(?:ing)?|budget|costs?)\s+(?:under|below|within|less than|up to|max(?:imum)?(?:\s+of)?|of|to|at)?\s*` + AMOUNT, 'i').exec(text);
+  const within = /\b(?:within|in|inside)\s+(\d+)\s+(day|week|month)s?\b/i.exec(text);
+  const days = within ? Number(within[1]) * (/week/i.test(within[2]) ? 7 : /month/i.test(within[2]) ? 30 : 1) : 21;
+  return {
+    approval_threshold_minor: approval ? Math.round(rupees(approval[1], approval[2]) * 100) : 100000000,
+    research_budget_minor: data ? Math.round(rupees(data[1], data[2]) * 100) : 200000,
+    deadline: new Date(Date.now() + days * 86400000).toISOString(),
+  };
+}
 const approveWords = /^\s*(approve|approved|yes|go ahead|confirm|ok(ay)?)\b/i;
 const STEP: Record<string, string> = {
   CREATED: 'Received your request', PARSING: 'Understanding the request', DISCOVERING: 'Finding suppliers', VERIFYING: 'Checking suppliers',
@@ -104,6 +125,7 @@ const CHECK_NAMES: Record<string, string> = {
   complaints_clear: 'No complaints or bad news', authorized: 'Authorized distributor', profile: 'Company profile', compliance: 'Compliance screen',
 };
 const PLAIN_BLOCKERS: Record<string, string> = {
+  COST_POLICY_UNCONFIRMED: 'Duty, tax or shipping terms are not confirmed',
   NO_ELIGIBLE_SUPPLIER_OR_INSUFFICIENT_SHORTLIST: 'No supplier passed the checks, or too few for a shortlist.',
   PROVIDER_UNAVAILABLE: 'A data provider could not be reached within the budget.',
   MODEL_RESPONSE_INVALID: "Gemini's answer could not be validated.",
@@ -178,6 +200,38 @@ function Answer({ run }: { run: Run }) {
   </div>;
 }
 
+// Company records often list every nearby post office; keep the first part plus state and country.
+const place = (address: string) => { const parts = address.split(',').map(x => x.trim()).filter(Boolean); return parts.length > 3 ? [parts[0], ...parts.slice(-2)].join(', ') : parts.join(', '); };
+
+/** What a live run found when it cannot finish on verified evidence alone. */
+function HandBack({ run, task }: { run: Run; task: Run['human_reviews'][number] }) {
+  const credits = (run.provider_usage as Record<string, unknown>[]).reduce((t, r) => t + Number(r.charged ?? r.reserved ?? 0), 0);
+  const insight = (id: string) => run.supplier_insights.find(i => String(i.supplier_id ?? '') === id);
+  const why = [...new Set(task.blockers.map(b => /^[A-Z0-9_]+$/.test(b) ? (PLAIN_BLOCKERS[b] ?? plain([b])[0]) : b))];
+  const items = run.specs.map(s => `${s.description}${s.quantity ? ` × ${s.quantity.toLocaleString('en-IN')}` : ''}`);
+  const groups = run.specs.map((sp, k) => ({ id: sp.id, title: items[k],
+    suppliers: run.suppliers.filter(s => run.quotes.some(q => q.spec_id === sp.id && q.supplier_id === s.id)) }));
+  const loose = run.suppliers.filter(s => !groups.some(g => g.suppliers.includes(s)));
+  if (loose.length) groups.push({ id: 'other', title: 'Other leads', suppliers: loose });
+  return <div className="answer">
+    <p>I couldn't verify enough to {run.request.request_type === 'purchase' ? 'place these orders' : 'build a shortlist'} yet{items.length ? <> for {items.join(', ')}</> : null}.</p>
+    {run.suppliers.length ? <>
+      <p>Here's what I found with live company data{run.request.mode === 'live' ? ` (${credits.toFixed(2)} Crustdata credits)` : ''}:</p>
+      {groups.map(g => <div className="found-item" key={g.id}><h4>{g.title}</h4>{g.suppliers.length ? <ul>{g.suppliers.map(s => { const i = insight(s.id); return <li key={s.id}><strong>{s.name}</strong>
+        {s.domain && s.domain !== 'unknown' && <> · <a href={`https://${s.domain}`} target="_blank" rel="noreferrer">{s.domain}</a></>}
+        {s.locations[0] && <> · <span className="muted">{place(s.locations[0])}</span></>}
+        {s.kind !== 'unknown' && <span className="tag">{s.kind}</span>}
+        {i?.summary ? <small>{String(i.summary)}</small> : null}</li>; })}</ul> : <p className="muted">No companies found for this item.</p>}</div>)}
+    </> : <p>Live search did not return companies that match these items.</p>}
+    {run.product_page_readings.length > 0 && <details className="fold"><summary>Details read from supplier product pages ({run.product_page_readings.length})</summary>
+      {run.product_page_readings.map((pg, i) => <div className="ev-item" key={i}><a href={pg.url} target="_blank" rel="noreferrer">{pg.url}</a>
+        {pg.details.map((d, j) => <span key={j}>{d.field.replaceAll('_', ' ')}: <strong>{d.value}</strong></span>)}</div>)}</details>}
+    {why.length > 0 && <details className="fold"><summary>Why I stopped before ordering ({why.length})</summary><ul>{why.map(w => <li key={w}><small>{w}</small></li>)}</ul></details>}
+    {run.suppliers.length > 0 && <details className="fold"><summary>Supplier checks and evidence ({run.suppliers.length} supplier{run.suppliers.length === 1 ? '' : 's'}, {run.checks.length} checks)</summary><EvidencePanel run={run}/></details>}
+    <p className="muted">Nothing was ordered or sent. Reply with more detail (exact specs, a supplier website, a region to search) and I'll try again, ask me to "shortlist suppliers and draft RFQs" instead, or say "cancel".</p>
+  </div>;
+}
+
 function AgentTurn({ run, segment }: { run: Run | undefined; segment: number }) {
   if (!run) return <div className="msg agent"><div className="avatar"><Layers3 size={15}/></div><div className="body"><div className="thinking"><span className="thinking-head"><LoaderCircle size={15} className="spin"/><span className="shimmer">Starting…</span></span></div></div></div>;
   const events = segmentEvents(run, segment);
@@ -189,8 +243,7 @@ function AgentTurn({ run, segment }: { run: Run | undefined; segment: number }) 
   const task = stop?.state === 'WAITING_FOR_HUMAN' ? [...run.human_reviews].reverse().find(t => new Date(t.created_at).getTime() <= new Date(stop.time).getTime() + 2000) : undefined;
   return <div className="msg agent"><div className="avatar"><Layers3 size={15}/></div><div className="body">
     <Thinking steps={stepsFor(run, events)} live={!finished} seconds={seconds}/>
-    {askedHere ? (task ? <div className="answer"><p>I'm stuck and need your help: {task.summary}</p>{task.blockers.length > 0 && <ul>{task.blockers.map((b, i) => <li key={i}><small>{/^[A-Z0-9_]+$/.test(b) ? (PLAIN_BLOCKERS[b] ?? plain([b])[0]) : b}</small></li>)}</ul>}
-      {run.request.mode === 'fixture' && <p className="muted">This desk is running on sample suppliers (no live Crustdata key), so only requests like the two examples on the home page have suppliers to find.</p>}<p className="muted">Reply with more detail (exact items, specs, quantities, a supplier website) and I'll try again, or say "cancel" to stop.</p></div>
+    {askedHere ? (task ? <HandBack run={run} task={task}/>
       : <div className="answer"><p>{stop?.message}</p><p className="muted">Reply below and I'll pick up from here.</p></div>) : finished ? <Answer run={run}/> : null}
   </div></div>;
 }
@@ -267,18 +320,20 @@ function App() {
       } else {
         add({ kind: 'user', text: message });
         const previous = lastRun?.request;
-        const standalone = leatherWords.test(message) || electronicsWords.test(message) || !previous;
+        // A long or self-contained message is a new request; a short one builds on the last.
+        const standalone = !previous || message.length > 140 || leatherWords.test(message) || electronicsWords.test(message);
         const leather = standalone ? leatherWords.test(message) : previous!.category === 'leather_goods';
         const electronics = !leather && (standalone ? electronicsWords.test(message) : previous!.category === 'electronics');
         const original = previous ? previous.text.split(/\n(?:Clarification|More detail):/)[0] : '';
         const requestText = standalone ? message : `${message}\n\nEarlier in this conversation I asked: ${original}`;
-        // Live company data where it can finish the job: Crustdata verifies companies but not part
-        // prices or stock, so electronics purchase plans run on the sample catalogue (labelled in the trace).
+        // Every request runs on live data when a Crustdata key is configured. Gemini adopts the
+        // destination and request type stated in the text; budgets and approval come from readTerms.
         const ready = await healthPromise;
-        const mode = ready.crustdata_configured && !electronics ? 'live' : 'fixture';
+        const mode = ready.crustdata_configured ? 'live' : 'fixture';
+        const terms = readTerms(requestText);
         const r = await api<Run>('/runs', 'POST', { text: requestText, category: leather ? 'leather_goods' : electronics ? 'electronics' : 'general', request_type: leather ? 'shortlist' : 'purchase',
-          destination: leather ? 'Uttar Pradesh, India' : 'Bengaluru, India', deadline: new Date(Date.now() + 21 * 86400000).toISOString(),
-          research_budget_minor: 200000, approval_threshold_minor: 100000000, mode, scenario: 'normal', specs: [], llm_enabled: !!ready.gemini_configured, provider_credit_limit: 1000 });
+          destination: leather ? 'Uttar Pradesh, India' : 'India', ...terms,
+          mode, scenario: 'normal', specs: [], llm_enabled: !!ready.gemini_configured, provider_credit_limit: 1000 });
         setRuns(p => ({ ...p, [r.id]: r }));
         add({ kind: 'agent', runId: r.id, segment: 0 });
       }

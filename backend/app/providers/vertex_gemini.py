@@ -82,6 +82,7 @@ class VertexGeminiTransport:
         config = self.types.GenerateContentConfig(
             system_instruction=json["systemInstruction"]["parts"][0]["text"],
             max_output_tokens=generation["maxOutputTokens"],
+            temperature=0.0,  # Same request text -> same parse; extraction is not creative work.
             automatic_function_calling=self.types.AutomaticFunctionCallingConfig(disable=True),
         )
         if json.get("tools") == [{"urlContext": {}}]:

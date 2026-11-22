@@ -44,8 +44,57 @@ class LiveDiscovery:
             # Minimum-cost profile: user-selected domain -> Identify only. No search/fetch.
             results = [{"url":"https://"+d, "title":"User-selected supplier domain"} for d in request.supplier_domains]
         else:
-            return self.search(request, specs, query)
+            suppliers, quotes, evidence = self.search(request, specs, query)
+            more = self.company_candidates(request, specs, {s.id for s in suppliers})
+            return suppliers + more[0], quotes + more[1], evidence + more[2]
         return self.collect(request, specs, results, evidence)
+
+    # Sourcing countries searched per item: India, plus any named in the request ("vs importing from China").
+    COUNTRIES = ("China", "Vietnam", "Taiwan", "Thailand", "Indonesia", "Bangladesh", "Turkey", "Malaysia", "Sri Lanka")
+
+    def company_candidates(self, request, specs, seen, per_search=4):
+        """Real companies per item from Crustdata's company graph (0.03 credits per result).
+
+        Web search finds pages, often marketplaces; this finds the makers themselves, with canonical
+        IDs, for every requested item and sourcing country. Facts stay unverified until checked."""
+        from app.providers.interfaces import IntegrationUnavailable
+        if not hasattr(self.client, "company_search"):
+            return [], [], []
+        pack = pack_for(request.category)
+        text = request.text.lower()
+        countries = ["India"] + [c for c in self.COUNTRIES if c.lower() in text]
+        suppliers, quotes, evidence = [], [], []
+        for spec in specs[:6]:
+            query = f"{spec.description} manufacturer"
+            for country in countries:
+                body = {"search": {"query": query, "mode": "hybrid"},
+                        "filters": {"field": "locations.country", "type": "=", "value": country},
+                        "fields": SEARCH_FIELDS, "limit": per_search}
+                try:
+                    result = self.client.company_search(self.run_id, body, purpose=f"Find makers of '{spec.description}' in {country}")
+                except IntegrationUnavailable:
+                    return suppliers, quotes, evidence  # Credit ceiling or provider issue: keep what we have.
+                companies = [c for c in result.get("companies") or [] if c.get("crustdata_company_id")]
+                found = Evidence(reference="https://api.crustdata.com/company/search", provider="crustdata_company_search", mode="live",
+                    fact=f"companies making '{spec.description}' in {country}", value=json.dumps({"request": body, "companies": companies})[:24000])
+                evidence.append(found)
+                for company in companies:
+                    basic = company.get("basic_info") or {}
+                    sid = "crustdata:" + str(company["crustdata_company_id"])
+                    if sid not in seen:
+                        seen.add(sid)
+                        locations = company.get("locations") or {}
+                        where = [x for x in [locations.get("headquarters") or locations.get("country")] if x]
+                        suppliers.append(Supplier(id=sid, canonical_id=str(company["crustdata_company_id"]),
+                            name=basic.get("name") or basic.get("primary_domain") or sid, aliases=[],
+                            domain=(basic.get("primary_domain") or "unknown").lower().removeprefix("www."),
+                            locations=where, kind="unknown", identity="resolved"))
+                    if not any(q.id == f"{spec.id}:{sid}" for q in quotes):
+                        quotes.append(Quote(id=f"{spec.id}:{sid}", supplier_id=sid, spec_id=spec.id, currency="UNK", tiers={},
+                            quantity=spec.quantity or 1, observed_at=now(), expires_at=now() + timedelta(hours=pack.freshness_hours),
+                            evidence_ids=[found.id], status="unverified",
+                            signals={k: (True if k == "identity" else None) for k in pack.trust_signals}))
+        return suppliers, quotes, evidence
 
     def search(self, request, specs, query, *, seen_pages=(), supplemental=False):
         if supplemental:
