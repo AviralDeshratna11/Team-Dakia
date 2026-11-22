@@ -12,6 +12,7 @@ import hashlib
 import os
 import sqlite3
 from datetime import datetime
+from math import isfinite
 
 from desk import ROOT, payments
 from desk.schemas import Decision, Order
@@ -89,6 +90,8 @@ def place_order(decision: Decision, request_key: str, approval_limit_inr: float,
     """method: card (vendor checkout) or bank_transfer (RFQ vendors are paid against their invoice)."""
     if decision.status != "PICKED" or decision.picked is None:
         return None
+    if decision.total_inr is None or not isfinite(decision.total_inr) or decision.total_inr < 0:
+        raise ValueError("Order total must be finite and non-negative")
     q = decision.picked
     key = order_key(request_key, decision)
     o = get_order(key)

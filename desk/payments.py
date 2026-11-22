@@ -18,7 +18,9 @@ import json
 import os
 import sqlite3
 import uuid
+from contextlib import contextmanager
 from datetime import datetime
+from math import isfinite
 from typing import Protocol
 
 from pydantic import BaseModel
@@ -78,74 +80,115 @@ def _db() -> sqlite3.Connection:
     return db
 
 
+@contextmanager
+def _write():
+    db = _db()
+    try:
+        with db:
+            db.execute("BEGIN IMMEDIATE")
+            yield db
+    finally:
+        db.close()
+
+
+def _check_amount(amount: float) -> None:
+    if not isfinite(amount) or amount < 0:
+        raise ValueError("Amount must be finite and non-negative")
+
+
 # ---------- the agent's wallet ----------
 
 class AgentWallet:
     """Spend limits the agent can't exceed, whatever it decides."""
 
-    def _get(self, k: str, default):
-        with _db() as db:
-            row = db.execute("SELECT v FROM wallet WHERE k = ?", (k,)).fetchone()
+    @staticmethod
+    def _get(db, key, default):
+        row = db.execute("SELECT v FROM wallet WHERE k = ?", (key,)).fetchone()
         return json.loads(row[0]) if row else default
 
-    def _set(self, k: str, v) -> None:
-        with _db() as db:
-            db.execute("INSERT INTO wallet VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v", (k, json.dumps(v)))
+    @staticmethod
+    def _set(db, key, value):
+        db.execute("INSERT INTO wallet VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v",
+                   (key, json.dumps(value)))
 
-    def _ensure(self) -> None:
-        if self._get("balance_inr", None) is None:
-            self._set("per_payment_limit_inr", DEFAULT_WALLET["per_payment_limit_inr"])
-            self._set("blocked_payees", [])
-            self._set("balance_inr", 0.0)
-            self.fund(DEFAULT_WALLET["balance_inr"], "initial mock funding")
+    def _ensure(self, db):
+        if self._get(db, "balance_inr", None) is None:
+            balance = DEFAULT_WALLET["balance_inr"]
+            self._set(db, "per_payment_limit_inr", DEFAULT_WALLET["per_payment_limit_inr"])
+            self._set(db, "blocked_payees", [])
+            self._set(db, "balance_inr", balance)
+            self._ledger(db, "fund", balance, balance, None, "initial mock funding")
 
     @property
     def balance(self) -> float:
-        self._ensure()
-        return float(self._get("balance_inr", 0.0))
+        with _write() as db:
+            self._ensure(db)
+            return self._get(db, "balance_inr", 0.0)
 
     @property
     def per_payment_limit(self) -> float:
-        self._ensure()
-        return float(self._get("per_payment_limit_inr", 0.0))
+        with _write() as db:
+            self._ensure(db)
+            return self._get(db, "per_payment_limit_inr", 0.0)
 
     def set_limit(self, inr: float) -> None:
-        self._ensure()
-        self._set("per_payment_limit_inr", inr)
+        _check_amount(inr)
+        with _write() as db:
+            self._ensure(db)
+            self._set(db, "per_payment_limit_inr", inr)
 
     def block(self, payee: str) -> None:
-        self._ensure()
-        self._set("blocked_payees", sorted(set(self._get("blocked_payees", [])) | {payee}))
+        with _write() as db:
+            self._ensure(db)
+            self._set(db, "blocked_payees", sorted(set(self._get(db, "blocked_payees", [])) | {payee}))
 
     def fund(self, inr: float, note: str = "founder top-up") -> None:
-        bal = float(self._get("balance_inr", 0.0)) + inr
-        self._set("balance_inr", bal)
-        self._ledger("fund", inr, bal, None, note)
+        with _write() as db:
+            self._adjust(db, "fund", inr, None, note)
 
-    def authorize(self, amount: float, payee: str) -> str | None:
+    def authorize(self, amount: float, payee: str, *, db=None) -> str | None:
         """None if the wallet allows this payment, else the reason it doesn't."""
-        if payee in self._get("blocked_payees", []):
+        _check_amount(amount)
+        if db is None:
+            with _write() as connection:
+                return self.authorize(amount, payee, db=connection)
+        self._ensure(db)
+        balance = self._get(db, "balance_inr", 0.0)
+        limit = self._get(db, "per_payment_limit_inr", 0.0)
+        if payee in self._get(db, "blocked_payees", []):
             return f"payee {payee} is blocked"
-        if amount > self.per_payment_limit:
-            return f"₹{amount:,.2f} is over the wallet's per-payment limit of ₹{self.per_payment_limit:,.0f}"
-        if amount > self.balance:
-            return f"insufficient funds: ₹{self.balance:,.2f} left, ₹{amount:,.2f} needed"
+        if amount > limit:
+            return f"₹{amount:,.2f} is over the wallet's per-payment limit of ₹{limit:,.0f}"
+        if amount > balance:
+            return f"insufficient funds: ₹{balance:,.2f} left, ₹{amount:,.2f} needed"
         return None
 
-    def debit(self, amount: float, ref: str, note: str) -> None:
-        bal = self.balance - amount
-        self._set("balance_inr", bal)
-        self._ledger("debit", -amount, bal, ref, note)
+    def debit(self, amount: float, ref: str, note: str, *, db=None) -> None:
+        if db is None:
+            with _write() as connection:
+                self.debit(amount, ref, note, db=connection)
+            return
+        self._adjust(db, "debit", amount, ref, note)
 
-    def credit(self, amount: float, ref: str, note: str) -> None:
-        bal = self.balance + amount
-        self._set("balance_inr", bal)
-        self._ledger("refund", amount, bal, ref, note)
+    def credit(self, amount: float, ref: str, note: str, *, db=None) -> None:
+        if db is None:
+            with _write() as connection:
+                self.credit(amount, ref, note, db=connection)
+            return
+        self._adjust(db, "refund", amount, ref, note)
 
-    def _ledger(self, kind: str, amount: float, bal: float, ref: str | None, note: str) -> None:
-        with _db() as db:
-            db.execute("INSERT INTO ledger (at, kind, amount_inr, balance_inr, ref, note) VALUES (?, ?, ?, ?, ?, ?)",
-                       (_now(), kind, round(amount, 2), round(bal, 2), ref, note))
+    def _adjust(self, db, kind, amount, ref, note):
+        _check_amount(amount)
+        self._ensure(db)
+        delta = -amount if kind == "debit" else amount
+        balance = round(self._get(db, "balance_inr", 0.0) + delta, 2)
+        self._set(db, "balance_inr", balance)
+        self._ledger(db, kind, delta, balance, ref, note)
+
+    @staticmethod
+    def _ledger(db, kind, amount, balance, ref, note):
+        db.execute("INSERT INTO ledger (at, kind, amount_inr, balance_inr, ref, note) VALUES (?, ?, ?, ?, ?, ?)",
+                   (_now(), kind, round(amount, 2), balance, ref, note))
 
     def ledger(self) -> list[dict]:
         with _db() as db:
@@ -163,61 +206,75 @@ class MockGateway:
 
     def create_intent(self, idempotency_key: str, amount_inr: float, payee: str, method: str,
                       metadata: dict | None = None) -> tuple[Intent, bool]:
-        existing = self.find(idempotency_key)
-        if existing:
-            if abs(existing.amount_inr - amount_inr) > 0.01:
-                raise ValueError(f"idempotency key {idempotency_key} reused with a different amount "
-                                 f"({existing.amount_inr} vs {amount_inr})")
-            return existing, False
-        it = Intent(id="pi_" + uuid.uuid4().hex[:14], idempotency_key=idempotency_key, amount_inr=round(amount_inr, 2),
-                    payee=payee, method=method, status="requires_confirmation", metadata=metadata or {},
-                    created_at=_now(), updated_at=_now())
-        with _db() as db:
+        _check_amount(amount_inr)
+        amount_inr = round(amount_inr, 2)
+        with _write() as db:
+            row = db.execute("SELECT data FROM intents WHERE idempotency_key = ?", (idempotency_key,)).fetchone()
+            if row:
+                existing = Intent.model_validate_json(row[0])
+                if (existing.amount_inr, existing.payee, existing.method) != (amount_inr, payee, method):
+                    raise ValueError("Idempotency key reused with different payment details")
+                return existing, False
+            it = Intent(id="pi_" + uuid.uuid4().hex[:14], idempotency_key=idempotency_key, amount_inr=amount_inr,
+                        payee=payee, method=method, status="requires_confirmation", metadata=metadata or {},
+                        created_at=_now(), updated_at=_now())
             db.execute("INSERT INTO intents VALUES (?, ?, ?)", (it.id, idempotency_key, it.model_dump_json()))
-        self._event("payment_intent.created", it)
-        return it, True
+            self._event(db, "payment_intent.created", it)
+            return it, True
 
     def confirm(self, intent_id: str) -> Intent:
-        it = self.get(intent_id)
-        if it is None:
-            raise KeyError(intent_id)
-        if it.status != "requires_confirmation":
-            return it                    # already settled: confirming again is a no-op
-        reason = os.environ.get("DESK_PAY_FAIL") or self.wallet.authorize(it.amount_inr, it.payee)
-        if reason:
-            it.status, it.failure_reason = "failed", reason
-            self._save(it)
-            self._event("payment_intent.payment_failed", it)
-            return it
-        self.wallet.debit(it.amount_inr, it.id, f"{it.method} to {it.payee}")
-        it.status = "succeeded"
-        self._save(it)
-        self._event("payment_intent.succeeded", it)
-        return it
+        return self._confirm(intent_id, retry=False)
 
     def retry(self, intent_id: str) -> Intent:
-        """A failed intent can be confirmed again once the cause is fixed (e.g. wallet topped up)."""
-        it = self.get(intent_id)
-        if it and it.status == "failed":
-            it.status, it.failure_reason = "requires_confirmation", None
-            self._save(it)
-        return self.confirm(intent_id)
+        """A failed intent can be confirmed again once the cause is fixed."""
+        return self._confirm(intent_id, retry=True)
+
+    def _confirm(self, intent_id, retry):
+        with _write() as db:
+            it = self.get(intent_id, db=db)
+            if it is None:
+                raise KeyError(intent_id)
+            if it.status != "requires_confirmation" and not (retry and it.status == "failed"):
+                return it
+            _check_amount(it.amount_inr)
+
+            # Older versions could commit the debit before saving the confirmation.
+            prior_debits = db.execute("SELECT amount_inr FROM ledger WHERE kind = 'debit' AND ref = ?", (it.id,)).fetchall()
+            if prior_debits and prior_debits != [(-it.amount_inr,)]:
+                raise ValueError("Wallet debit history does not match the payment intent")
+            reason = None
+            if not prior_debits:
+                reason = os.environ.get("DESK_PAY_FAIL") or self.wallet.authorize(it.amount_inr, it.payee, db=db)
+                if not reason:
+                    self.wallet.debit(it.amount_inr, it.id, f"{it.method} to {it.payee}", db=db)
+
+            it.status, it.failure_reason = ("failed", reason) if reason else ("succeeded", None)
+            self._save(it, db)
+            self._event(db, "payment_intent.payment_failed" if reason else "payment_intent.succeeded", it)
+            return it
 
     def refund(self, intent_id: str, amount_inr: float | None = None, reason: str = "") -> Intent:
-        it = self.get(intent_id)
-        if it is None or it.status not in ("succeeded", "refunded"):
-            raise ValueError(f"can't refund {intent_id}")
-        amount = min(amount_inr or it.amount_inr, it.amount_inr - it.refunded_inr)
-        it.refunded_inr = round(it.refunded_inr + amount, 2)
-        it.status = "refunded" if it.refunded_inr >= it.amount_inr - 0.01 else "succeeded"
-        self._save(it)
-        self.wallet.credit(amount, it.id, f"refund from {it.payee}: {reason}")
-        self._event("charge.refunded", it, {"amount_inr": amount, "reason": reason})
-        return it
+        with _write() as db:
+            it = self.get(intent_id, db=db)
+            if it is None or it.status not in ("succeeded", "refunded"):
+                raise ValueError(f"can't refund {intent_id}")
+            requested = it.amount_inr if amount_inr is None else amount_inr
+            _check_amount(requested)
+            amount = round(min(requested, it.amount_inr - it.refunded_inr), 2)
+            if not amount:
+                return it
+            it.refunded_inr = round(it.refunded_inr + amount, 2)
+            it.status = "refunded" if it.refunded_inr == it.amount_inr else "succeeded"
+            self.wallet.credit(amount, it.id, f"refund from {it.payee}: {reason}", db=db)
+            self._save(it, db)
+            self._event(db, "charge.refunded", it, {"amount_inr": amount, "reason": reason})
+            return it
 
-    def get(self, intent_id: str) -> Intent | None:
-        with _db() as db:
-            row = db.execute("SELECT data FROM intents WHERE id = ?", (intent_id,)).fetchone()
+    def get(self, intent_id: str, *, db=None) -> Intent | None:
+        if db is None:
+            with _db() as connection:
+                return self.get(intent_id, db=connection)
+        row = db.execute("SELECT data FROM intents WHERE id = ?", (intent_id,)).fetchone()
         return Intent.model_validate_json(row[0]) if row else None
 
     def find(self, idempotency_key: str) -> Intent | None:
@@ -236,17 +293,17 @@ class MockGateway:
                               (since_id,)).fetchall()
         return [{"id": r[0], "at": r[1], "type": r[2], "intent_id": r[3], **json.loads(r[4])} for r in rows]
 
-    def _save(self, it: Intent) -> None:
+    @staticmethod
+    def _save(it: Intent, db) -> None:
         it.updated_at = _now()
-        with _db() as db:
-            db.execute("UPDATE intents SET data = ? WHERE id = ?", (it.model_dump_json(), it.id))
+        db.execute("UPDATE intents SET data = ? WHERE id = ?", (it.model_dump_json(), it.id))
 
-    def _event(self, type_: str, it: Intent, extra: dict | None = None) -> None:
+    @staticmethod
+    def _event(db, type_: str, it: Intent, extra: dict | None = None) -> None:
         data = {"amount_inr": it.amount_inr, "payee": it.payee, "status": it.status,
                 "failure_reason": it.failure_reason, **(extra or {})}
-        with _db() as db:
-            db.execute("INSERT INTO events (at, type, intent_id, data) VALUES (?, ?, ?, ?)",
-                       (_now(), type_, it.id, json.dumps(data)))
+        db.execute("INSERT INTO events (at, type, intent_id, data) VALUES (?, ?, ?, ?)",
+                   (_now(), type_, it.id, json.dumps(data)))
 
 
 class RazorpayProvider:

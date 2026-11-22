@@ -85,14 +85,20 @@ class CrustdataClient:
                     raise
                 self.sleep(max(1.0, min(65.0, exc.wait or 2 ** (attempt + 1))))
 
-    def _post(self, run_id, path, payload, units=1, purpose=""):
+    def reservation_cost(self, path, units=1) -> Decimal:
         if self.permissions is None:
             self.permissions = self.free_get("/account/endpoints")
         endpoint = next((e for e in self.permissions.get("endpoints", []) if e.get("path") == path), None)
         if not endpoint or endpoint.get("status") != "enabled" or endpoint.get("base_credits") is None:
             raise IntegrationUnavailable("CRUSTDATA_ENDPOINT_UNAVAILABLE_OR_UNPRICED: " + path)
         # Reservation uses the account's own base price; the response header settles the actual charge.
-        reserved = Decimal(str(endpoint["base_credits"])) * units
+        return Decimal(str(endpoint["base_credits"])) * units
+
+    def can_search(self, run_id) -> bool:
+        return self.spent(run_id) + self.reservation_cost("/web/search/live") <= self.run_limits.get(run_id, self.limit)
+
+    def _post(self, run_id, path, payload, units=1, purpose=""):
+        reserved = self.reservation_cost(path, units)
         request_hash = hashlib.sha256(json.dumps([path, payload], sort_keys=True).encode()).hexdigest()
         call_id = hashlib.sha256(json.dumps([run_id, path, payload], sort_keys=True).encode()).hexdigest()
         stamp = datetime.now(timezone.utc).isoformat()

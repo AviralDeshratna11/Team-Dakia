@@ -117,23 +117,30 @@ class LLMExtractionService:
                 question = question or f"Your text specifies {intent.destination}, while the delivery field is {request.destination}. Confirm the destination in the request form."
         return specs, question
 
-    def extract(self, run):
+    def extract(self, run, *, follow_up=None):
         by_id = {e.id:e for e in run.evidence if e.provider not in {"gemini_extraction", "reviewed_supplier_quote"}}
         provider_quotes = [quote for quote in run.quotes if not quote.reviewed_terms]
+        if follow_up:
+            provider_quotes = [q for q in provider_quotes if q.spec_id == follow_up.spec_id
+                               and q.supplier_id in follow_up.supplier_ids and q.status == "unverified"]
+            scoped_ids = {eid for quote in provider_quotes for eid in quote.evidence_ids}
+            by_id = {eid: by_id[eid] for eid in follow_up.evidence_ids if eid in by_id and eid in scoped_ids}
         if not provider_quotes:
             return
-        data = {"specs":[s.model_dump(mode="json") for s in run.specs],
-                "suppliers":[s.model_dump(mode="json") for s in run.suppliers],
+        supplier_ids = {q.supplier_id for q in provider_quotes}
+        data = {"specs":[s.model_dump(mode="json") for s in run.specs if not follow_up or s.id == follow_up.spec_id],
+                "suppliers":[s.model_dump(mode="json") for s in run.suppliers if not follow_up or s.id in supplier_ids],
                 "quotes":[{"supplier_id":q.supplier_id,"spec_id":q.spec_id,"evidence_ids":q.evidence_ids} for q in provider_quotes],
                 "evidence":[{"id":e.id,"provider":e.provider,"reference":e.reference,"content":source_text(e)[:6000]} for e in by_id.values()]}
-        extraction = self.client.generate(run.id,"extract_provider_evidence",EVIDENCE_PROMPT,data,SupplierExtraction)
+        stage = "extract_follow_up_evidence" if follow_up else "extract_provider_evidence"
+        extraction = self.client.generate(run.id, stage, EVIDENCE_PROMPT, data, SupplierExtraction)
         suppliers = {s.id:s for s in run.suppliers}
         accepted = []
         warnings = []
         for insight in extraction.insights:
             supplier = suppliers.get(insight.supplier_id)
             scoped = {eid for q in provider_quotes if q.supplier_id == insight.supplier_id for eid in q.evidence_ids}
-            if supplier is None or not insight.evidence_ids or not set(insight.evidence_ids) <= scoped:
+            if supplier is None or not insight.evidence_ids or not set(insight.evidence_ids) <= scoped.intersection(by_id):
                 warnings.append("Discarded insight with unknown supplier or out-of-scope evidence")
                 continue
             valid_facts = []
@@ -177,8 +184,9 @@ class LLMExtractionService:
                         quote.status = "unverified"  # Extraction never independently authorizes a purchase.
                 valid_facts.append(fact)
             accepted.append(insight.model_copy(update={"facts":valid_facts}))
-        run.supplier_insights = [i.model_dump(mode="json") for i in accepted]
-        run.extraction_warnings = warnings
+        previous = [i for i in run.supplier_insights if i.get("supplier_id") not in {item.supplier_id for item in accepted}] if follow_up else []
+        run.supplier_insights = previous + [i.model_dump(mode="json") for i in accepted]
+        run.extraction_warnings = (run.extraction_warnings + warnings) if follow_up else warnings
 
     @staticmethod
     def apply_fact(supplier, quotes, fact):

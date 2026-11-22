@@ -377,7 +377,7 @@ export interface components {
             /** Research Budget Minor */
             research_budget_minor?: number | null;
             /** Provider Credit Limit */
-            provider_credit_limit?: number | null;
+            provider_credit_limit?: number | string | null;
         };
         /** Candidate */
         Candidate: {
@@ -1080,6 +1080,24 @@ export interface components {
              */
             manufacturer_verified: boolean;
         };
+        /** SupplierSearchReport */
+        SupplierSearchReport: {
+            /** Spec Id */
+            spec_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "completed" | "skipped" | "unavailable";
+            /** Message */
+            message: string;
+            /** Query */
+            query: string | null;
+            /** Evidence Ids */
+            evidence_ids: string[];
+            /** Supplier Ids */
+            supplier_ids: string[];
+        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -1180,6 +1198,7 @@ export interface components {
             supplier_insights: {
                 [key: string]: unknown;
             }[];
+            supplier_search: components["schemas"]["SupplierSearchReport"] | null;
             /** Extraction Warnings */
             extraction_warnings: string[];
             /** Human Reviews */

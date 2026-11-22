@@ -6,6 +6,7 @@ Step 1 lives in understand.py, step 3 in check.py, step 6 in orders.py. Step 4 (
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+from math import isfinite
 from pathlib import Path
 from urllib.parse import quote as urlquote
 
@@ -153,30 +154,39 @@ def assess_quote(q: Quote, spec: Spec, pack: dict) -> Quote:
         q.flags.append(f"possible clone: same part number, made by {q.manufacturer}, not {spec.maker}")
 
     _price_at_qty(q, spec.qty, pack["fx_to_inr"])
-    if q.unit_price is None:
-        q.status, q.note = Status.GAP, "no price on page"
+    if not _valid_price(q.unit_price) or not _valid_price(q.unit_price_inr):
+        q.status, q.note = Status.GAP, "no valid price in INR for the purchase quantity"
+    elif q.ships_to_india is False:
+        q.status, q.note = Status.FOUND_UNFIT, "doesn't ship to India"
+    elif q.stock is not None and q.stock < q.buy_qty:
+        q.status, q.note = Status.FOUND_UNFIT, f"stock {q.stock} < purchase quantity {q.buy_qty}"
     elif q.stock is None and q.lead_time_days is None:
         q.status, q.note = Status.GAP, "stock not on page"
     elif q.stock is None:
         q.note = f"no stock figure; vendor commits to {q.lead_time_days} days lead time"
-    elif q.ships_to_india is False:
-        q.status, q.note = Status.FOUND_UNFIT, "doesn't ship to India"
-    elif q.stock is not None and q.stock < spec.qty:
-        q.status, q.note = Status.FOUND_UNFIT, f"stock {q.stock} < need {spec.qty}"
     elif q.buy_qty and q.buy_qty > spec.qty:
         q.note = f"MOQ forces buying {q.buy_qty}"
     return q
 
 
+def _valid_price(price: float | None) -> bool:
+    return price is not None and isfinite(price) and price >= 0
+
+
 def _price_at_qty(q: Quote, qty: int, fx: dict) -> None:
     """Cheapest tier we qualify for at qty; if MOQ is above qty, buy the smallest tier."""
+    q.buy_qty = max(qty, q.moq or 0)
     if not q.tiers:
         return
-    ok = [t for t in q.tiers if t.min_qty <= qty]
+    tiers = [tier for tier in q.tiers if tier.min_qty > 0 and _valid_price(tier.unit_price)]
+    if not tiers:
+        q.unit_price = q.unit_price_inr = None
+        return
+    ok = [tier for tier in tiers if tier.min_qty <= q.buy_qty]
     if ok:
-        tier, q.buy_qty = min(ok, key=lambda t: t.unit_price), qty
+        tier = min(ok, key=lambda t: t.unit_price)
     else:
-        tier = min(q.tiers, key=lambda t: (t.min_qty, t.unit_price))
+        tier = min(tiers, key=lambda t: (t.min_qty, t.unit_price))
         q.buy_qty = tier.min_qty
     q.unit_price, q.currency = tier.unit_price, tier.currency
     rate = fx.get(tier.currency)
@@ -237,8 +247,17 @@ def decide(spec: Spec, find: FindResult, checks: list[Check], pack: dict,
     considered, rejected, ok, review = [], [], [], []
 
     for q in find.quotes:
-        if q.status != Status.FOUND or q.unit_price_inr is None:
-            considered.append(_row(q, None, None, f"not a usable quote: {q.status.value} {q.note}".strip()))
+        issue = None
+        if q.status != Status.FOUND:
+            issue = f"{q.status.value} {q.note}".strip()
+        elif not _valid_price(q.unit_price_inr) or (q.unit_price is not None and not _valid_price(q.unit_price)):
+            issue = "invalid unit price"
+        elif q.buy_qty is None or q.buy_qty < max(spec.qty, q.moq or 0):
+            issue = "price does not cover the required purchase quantity"
+        elif q.stock is not None and q.stock < q.buy_qty:
+            issue = f"stock {q.stock} < purchase quantity {q.buy_qty}"
+        if issue:
+            considered.append(_row(q, None, None, f"not a usable quote: {issue}"))
             continue
         c = by_domain.get(q.vendor_domain)
         d = dists.get(q.vendor_domain) or {**pack.get("unknown_vendor", {}), "ships_to_india": q.ships_to_india}
@@ -249,7 +268,9 @@ def decide(spec: Spec, find: FindResult, checks: list[Check], pack: dict,
             rejected.append({**row, "rule": "not a real company", "why": c.reason if c else "not checked"})
         elif d.get("ships_to_india") is False:
             rejected.append({**row, "rule": "doesn't ship to India", "why": f"{q.vendor} not marked ships_to_india"})
-        elif deadline and lc.arrives_by and lc.arrives_by > deadline:
+        elif deadline and lc.arrives_by is None:
+            rejected.append({**row, "rule": "arrival date unknown", "why": f"no confirmed arrival date for deadline {deadline}"})
+        elif deadline and lc.arrives_by > deadline:
             rejected.append({**row, "rule": "misses the deadline", "why": f"arrives {lc.arrives_by}, need {deadline}"})
         elif c.score is not None and c.score < min_score:
             rejected.append({**row, "rule": "cheaper but untrusted", "why": f"score {c.score} < {min_score}: {c.reason}"})

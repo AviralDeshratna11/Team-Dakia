@@ -23,7 +23,7 @@ from app.providers.razorpay_preview import upi_payout_preview
 
 class BudgetUpdate(Contract):
     research_budget_minor: int | None = Field(default=None, ge=0)
-    provider_credit_limit: float | None = Field(default=None, ge=0, le=1000)
+    provider_credit_limit: Decimal | None = Field(default=None, ge=0, le=1000, decimal_places=2)
 
 
 class ClarificationAnswer(Contract):
@@ -177,7 +177,7 @@ def create_app(database: Database | None = None):
                 run.request.research_budget_minor = body.research_budget_minor
                 run.events.append(WorkflowEvent(state=run.state, message=f"Research ceiling updated to {body.research_budget_minor} paise; committed spend remains visible."))
             if body.provider_credit_limit is not None:
-                run.request.provider_credit_limit = Decimal(str(body.provider_credit_limit))
+                run.request.provider_credit_limit = body.provider_credit_limit
                 run.events.append(WorkflowEvent(state=run.state, message=f"Crustdata credit ceiling set to {body.provider_credit_limit:g}; credits already spent stay on the ledger and no new call may exceed it."))
             save_run(c, run)
         return run

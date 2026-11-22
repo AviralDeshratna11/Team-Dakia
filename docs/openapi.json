@@ -936,6 +936,10 @@
                 "minimum": 0.0
               },
               {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,2}0*$"
+              },
+              {
                 "type": "null"
               }
             ],
@@ -2792,6 +2796,63 @@
         ],
         "title": "SupplierQuoteSubmission"
       },
+      "SupplierSearchReport": {
+        "properties": {
+          "spec_id": {
+            "type": "string",
+            "title": "Spec Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "skipped",
+              "unavailable"
+            ],
+            "title": "Status"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query"
+          },
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Evidence Ids"
+          },
+          "supplier_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Supplier Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "spec_id",
+          "status",
+          "message",
+          "query",
+          "evidence_ids",
+          "supplier_ids"
+        ],
+        "title": "SupplierSearchReport"
+      },
       "ValidationError": {
         "properties": {
           "loc": {
@@ -3094,6 +3155,16 @@
             "type": "array",
             "title": "Supplier Insights"
           },
+          "supplier_search": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SupplierSearchReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "extraction_warnings": {
             "items": {
               "type": "string"
@@ -3145,6 +3216,7 @@
           "llm_usage",
           "request_interpretation",
           "supplier_insights",
+          "supplier_search",
           "extraction_warnings",
           "human_reviews",
           "human_completed_spec_ids",

@@ -63,6 +63,8 @@ The dashboard defaults to **Live** and **Use Gemini** enabled. Enter a supplier 
 
 Enable the Gemini checkbox in a new dashboard request to use an LLM for (1) parsing the founder's requirements and (2) extracting useful facts, summaries and gaps from Crustdata evidence. Outputs are validated and saved; model-derived facts never authorize spending or silently become verified quotes. Normally two model calls are made, with four attempts maximum per run and persistent response caching.
 
+For a live run with **Use Gemini** enabled and the supplier domain left blank, Gemini can use the initial Crustdata evidence to refine the search for the first item with a purchasing or shortlist gap. The worker performs at most one follow-up search per run and fits the search, identity checks and page fetches inside the configured Crustdata credit ceiling. Open **Gemini intelligence** for the new leads, source pages and search status. Confirm purchase terms with supplier-issued evidence before checkout.
+
 Stop any existing worker first. From `backend`, start a replacement with hidden key prompts:
 
 ```powershell

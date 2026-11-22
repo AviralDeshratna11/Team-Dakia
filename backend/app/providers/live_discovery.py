@@ -1,6 +1,7 @@
 """Live supplier discovery preserves unknown purchasing facts; no fixture fallback."""
 from datetime import timedelta
 import json
+import re
 from urllib.parse import urlparse, parse_qs
 from app.contracts import Supplier, Quote, Evidence, now
 from app.config import pack_for
@@ -10,15 +11,23 @@ from app.providers.interfaces import IntegrationUnavailable
 def supplier_url(url):
     """Unwrap ordinary search redirects; reject opaque redirect URLs and search engines."""
     for _ in range(3):
-        parsed = urlparse(url)
-        domain = (parsed.hostname or "").lower().removeprefix("www.")
+        try:
+            parsed = urlparse(url)
+            domain = (parsed.hostname or "").lower().removeprefix("www.")
+            port = parsed.port
+        except (TypeError, ValueError):
+            return None
         if domain.startswith("google.") or domain.endswith(".google.com") or domain in {"bing.com", "duckduckgo.com"}:
             params = parse_qs(parsed.query)
             target = next((x for key in ("url", "q") for x in params.get(key, []) if x.startswith("https://")), None)
             if not target: return None
             url = target
             continue
-        return url if parsed.scheme == "https" and domain else None
+        if (parsed.scheme == "https" and not parsed.username and not parsed.password and port in {None, 443}
+                and re.fullmatch(r"(?:[a-z0-9-]+\.)+[a-z]{2,63}", domain)
+                and not domain.endswith((".local", ".localhost", ".internal"))):
+            return parsed._replace(fragment="").geturl()
+        return None
     return None
 
 
@@ -35,17 +44,28 @@ class LiveDiscovery:
             # Minimum-cost profile: user-selected domain -> Identify only. No search/fetch.
             results = [{"url":"https://"+d, "title":"User-selected supplier domain"} for d in request.supplier_domains]
         else:
+            return self.search(request, specs, query)
+        return self.collect(request, specs, results, evidence)
+
+    def search(self, request, specs, query, *, seen_pages=(), supplemental=False):
+        if supplemental:
+            result = self.client.search(self.run_id, query, purpose="Gemini follow-up for a missing supplier")
+        else:
             result = self.client.search(self.run_id, query)
-            results = result.get("results", [])
-            evidence.append(Evidence(reference="https://api.crustdata.com/web/search/live", provider="crustdata_web_search", mode="live",
-                fact="supplier discovery search", value=json.dumps({"query":query,"results":results})[:24000]))
+        results = result.get("results") or []
+        evidence = [Evidence(reference="https://api.crustdata.com/web/search/live", provider="crustdata_web_search", mode="live",
+            fact="Gemini-guided supplier discovery search" if supplemental else "supplier discovery search",
+            value=json.dumps({"query": query, "results": results})[:24000])]
+        return self.collect(request, specs, results, evidence, seen_pages)
+
+    def collect(self, request, specs, results, evidence, seen_pages=()):
         # Prefer established catalogue candidates discovered in the live result set; otherwise
         # keep actual result domains as unclassified candidates, never call them factories.
         domains, pages = [], []
         excluded = {"youtube.com", "facebook.com", "linkedin.com", "indiamart.com", "justdial.com", "amazon.in", "amazon.com", "reddit.com"}
         for row in results:
             url = supplier_url(row.get("url", ""))
-            if url is None: continue
+            if url is None or url in seen_pages: continue
             parsed = urlparse(url)
             domain = (parsed.hostname or "").lower().removeprefix("www.")
             if parsed.scheme != "https" or not domain or any(domain == d or domain.endswith("."+d) for d in excluded):
@@ -82,7 +102,7 @@ class LiveDiscovery:
             for match in matches:
                 company = match.get("company_data", {})
                 basic = company.get("basic_info", {})
-                known = [basic.get("primary_domain", "")] + basic.get("all_domains", [])
+                known = [basic.get("primary_domain", "")] + (basic.get("all_domains") or [])
                 if domain in [str(x).lower().removeprefix("www.") for x in known]: matching.append(company)
             ids = {str(m.get("crustdata_company_id") or m.get("basic_info", {}).get("crustdata_company_id")) for m in matching}
             resolved = len(ids) == 1 and "None" not in ids

@@ -35,6 +35,6 @@ The full suite also exercises provider budgets and retry handling, compliance sc
 
 ## Known findings and limits
 
-Four cases are marked as strict expected failures. They cover missing quote citations, negative quote prices, quote observations older than the configured freshness limit, and fixture parsing that substitutes connectors for USB-C cables. Pytest reports a newly passing strict case as a failure until its marker is reviewed and removed.
+Three cases are marked as strict expected failures. They cover missing quote citations, quote observations older than the configured freshness limit, and fixture parsing that substitutes connectors for USB-C cables. The negative-price case now runs as a regular regression test.
 
 Every route is exercised with at least one successful request. The finite case set measures the recorded contracts and specific failure paths. Live supplier accuracy, tax and duty accuracy, real model quality, production performance, and actual settlement remain unmeasured. [NIST generative AI risk profile](https://www.nist.gov/publications/artificial-intelligence-risk-management-framework-generative-artificial-intelligence)

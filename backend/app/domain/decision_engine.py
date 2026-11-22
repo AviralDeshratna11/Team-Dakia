@@ -13,8 +13,11 @@ def landed_cost(quote, pack) -> Cost | None:
     fx = pack.fx_to_inr.get(quote.currency)
     if not applicable or quote.shipping_minor is None or fx is None:
         return None
+    unit_price = quote.tiers[max(applicable)]
+    if unit_price < 0:
+        return None
     rate = Decimal(fx)
-    goods = rounded(Decimal(quote.tiers[max(applicable)] * quote.quantity) * rate)
+    goods = rounded(Decimal(unit_price * quote.quantity) * rate)
     shipping = rounded(Decimal(quote.shipping_minor * (quote.quantity if quote.shipping_basis == "unit" else 1)) * rate)
     duty = rounded(Decimal(goods + shipping) * Decimal(pack.duty_bps) / 10000)
     tax = rounded(Decimal(goods + shipping + duty) * Decimal(pack.tax_bps) / 10000)

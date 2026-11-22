@@ -56,7 +56,7 @@ class Run:
         }
         self.records.append(rec)
         fname = f"{step}__{part}.json" if part else f"{step}.json"
-        (self.dir / fname).write_text(json.dumps(rec, indent=2, ensure_ascii=False))
+        (self.dir / fname).write_text(json.dumps(rec, indent=2, ensure_ascii=False), encoding="utf-8")
         return rec
 
     def step(self, step: str, fn: Callable, *args, part: str | None = None, **kwargs) -> Any:
@@ -86,4 +86,11 @@ def load_run(run: str | Path | None = None) -> list[dict]:
     if not path.is_absolute() and not path.exists():
         path = RUNS_DIR / path
     files = sorted(path.glob("*.json"), key=lambda p: p.stat().st_mtime_ns)   # execution order
-    return [json.loads(p.read_text()) for p in files]
+    records = []
+    for file in files:
+        try:
+            content = file.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            content = file.read_text()  # Older CLI runs used the system encoding.
+        records.append(json.loads(content))
+    return records

@@ -314,6 +314,15 @@ class HumanReviewResolution(Contract):
     deadline: datetime | None = None
 
 
+class SupplierSearchReport(Contract):
+    spec_id: str
+    status: Literal["completed", "skipped", "unavailable"]
+    message: str
+    query: str | None = None
+    evidence_ids: list[str] = Field(default_factory=list)
+    supplier_ids: list[str] = Field(default_factory=list)
+
+
 class WorkflowRun(Contract):
     id: str = Field(default_factory=uid)
     request: SourcingRequest
@@ -336,6 +345,7 @@ class WorkflowRun(Contract):
     llm_usage: list[dict[str, str | int | None]] = Field(default_factory=list)
     request_interpretation: dict[str, Any] | None = None
     supplier_insights: list[dict[str, Any]] = Field(default_factory=list)
+    supplier_search: SupplierSearchReport | None = None
     extraction_warnings: list[str] = Field(default_factory=list)
     human_reviews: list[HumanReviewTask] = Field(default_factory=list)
     human_completed_spec_ids: list[str] = Field(default_factory=list)

@@ -21,6 +21,7 @@ from app.services.specification_parser import FixtureParser
 from app.providers.gemini import GeminiClient, GeminiOutputError
 from app.services.llm_extraction import LLMExtractionService
 from app.services.human_review import open_review
+from app.services.supplier_search import search_for_supplier
 
 ACTIVE = {S.CREATED, S.PARSING, S.DISCOVERING, S.VERIFYING, S.RESEARCHING, S.DECIDING, S.SCREENING, S.EXECUTING}
 
@@ -94,6 +95,7 @@ class Orchestrator:
 
     def advance(self, c, run):
         pack = pack_for(run.request.category)
+        live_company = run.request.mode == "live" and pack.live_discovery == "company_search" and not run.request.supplier_domains
         if run.state == S.CREATED:
             transition(run, S.PARSING, "Gemini request parsing enabled." if run.request.llm_enabled else "Reading the request with the bounded reference/structured parser; Gemini disabled for this run.")
         elif run.state == S.PARSING:
@@ -109,7 +111,7 @@ class Orchestrator:
         elif run.state == S.DISCOVERING:
             if run.request.mode == "live":
                 client = self.crustdata(run)
-                provider = (LiveCompanyDiscovery if pack.live_discovery == "company_search" else LiveDiscovery)(client, run.id)
+                provider = (LiveCompanyDiscovery if live_company else LiveDiscovery)(client, run.id)
             else:
                 provider = FixtureDiscovery()
             # Simulated bounded provider retries occur on separate persisted ticks.
@@ -127,21 +129,24 @@ class Orchestrator:
             run.suppliers.extend(supplier for supplier in saved_suppliers if supplier.id not in discovered_ids)
             run.quotes.extend(saved_quotes)
             run.evidence.extend(saved_evidence)
-            if run.request.mode == "live" and pack.live_discovery == "company_search":
+            if live_company:
                 transition(run, S.VERIFYING, f"Found {len(run.suppliers)} candidate companies in Crustdata's company graph; checking each one next.")
                 return
             transition(run, S.VERIFYING, "Canonical company IDs merged; source timestamps saved." + (" Provider retries exhausted; quote facts remain unverified." if attempts == 3 else ""))
         elif run.state == S.VERIFYING:
-            live_company = run.request.mode == "live" and pack.live_discovery == "company_search"
             if live_company and self.live_verify_step(run, pack):
                 return
+            follow_up = run.stage_attempts.pop("verify_supplier_search", 0)
             if run.request.llm_enabled:
                 try:
-                    self.llm().extract(run)
+                    if follow_up:
+                        self.llm().extract(run, follow_up=run.supplier_search)
+                    else:
+                        self.llm().extract(run)
                     run.events.append(WorkflowEvent(state=run.state, message="Gemini provider evidence extraction saved with cited claims and explicit gaps. LLM claims do not authorize purchases."))
                 except (GeminiOutputError,IntegrationUnavailable) as exc:
                     recoverable = (isinstance(exc,GeminiOutputError) and exc.code != "GEMINI_OUTPUT_BLOCKED") or "GEMINI_CALL_LIMIT" in str(exc)
-                    if not recoverable: raise
+                    if not recoverable and not follow_up: raise
                     run.extraction_warnings.append("Supplier insight generation unavailable: "+str(exc)+". Raw evidence retained; no model claims applied or automatic paid retry.")
                     run.events.append(WorkflowEvent(state=run.state,message=run.extraction_warnings[-1]))
             if live_company:
@@ -167,6 +172,16 @@ class Orchestrator:
                 transition(run, S.SCREENING, "Shortlist drafted. Screening each finalist (who runs it, adverse news, front-company signs) before anything goes out.")
                 return
             blocked = [d for d in run.decisions if d.outcome not in {"selected","handled_by_human"} or (run.request.request_type == "shortlist" and d.outcome != "handled_by_human" and len(d.selected_supplier_ids) < run.request.shortlist_count)]
+            if (blocked and run.request.mode == "live" and run.request.llm_enabled
+                    and not run.request.supplier_domains and run.supplier_search is None
+                    and not any(task.resolution in {"evaluate_quotes", "manual_completion"} for task in run.human_reviews)):
+                found = search_for_supplier(run, self.crustdata(run),
+                                            lambda *args: self.llm().client.generate(*args), blocked[0].spec_id)
+                if found:
+                    run.stage_attempts["verify_supplier_search"] = 1
+                    transition(run, S.VERIFYING, run.supplier_search.message)
+                    return
+                run.events.append(WorkflowEvent(state=run.state, message=run.supplier_search.message))
             if blocked and run.request.human_review_enabled:
                 reasons = sorted({reason for d in blocked for candidate in d.candidates for reason in candidate.reason_codes})
                 if not reasons: reasons = ["NO_ELIGIBLE_SUPPLIER_OR_INSUFFICIENT_SHORTLIST"]
@@ -216,7 +231,7 @@ class Orchestrator:
 
     def research_step(self, c, run, pack):
         suppliers = {s.id: s for s in run.suppliers}
-        if run.request.mode == "live" and pack.live_discovery == "company_search":
+        if run.request.mode == "live" and pack.live_discovery == "company_search" and not run.request.supplier_domains:
             return self.live_research_step(run, pack)
         if run.request.request_type != "purchase" or run.request.mode == "live":
             return False

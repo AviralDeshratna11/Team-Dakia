@@ -675,8 +675,7 @@ def test_research_value_boundary(price, stock, expected):
 @pytest.mark.parametrize("quote_changes", [
     pytest.param({"evidence_ids": []}, id="missing-citations", marks=pytest.mark.xfail(
         strict=True, raises=AssertionError, reason="Eligibility accepts an empty quote citation list")),
-    pytest.param({"tiers": {1: -100}}, id="negative-price", marks=pytest.mark.xfail(
-        strict=True, raises=AssertionError, reason="Eligibility accepts a negative unit price")),
+    pytest.param({"tiers": {1: -100}}, id="negative-price"),
     pytest.param({"observed_at": datetime(2025, 12, 30, tzinfo=timezone.utc)}, id="stale-observation",
                  marks=pytest.mark.xfail(strict=True, raises=AssertionError,
                                          reason="Eligibility honors expiry but ignores configured observation age")),

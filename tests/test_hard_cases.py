@@ -5,7 +5,8 @@ Run: uv run pytest -q
 
 from __future__ import annotations
 
-from datetime import date
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, timedelta
 
 import pytest
 from conftest import FakeCrustdata, find_with, quote
@@ -22,6 +23,79 @@ DEADLINE = date(2027, 1, 31)
 
 def priced(spec, pack, *qs):
     return find_with(*[steps.assess_quote(q, spec, pack) for q in qs])
+
+
+def test_retry_after_debit_before_confirmation(pack, spec, real_sellers, monkeypatch):
+    found = priced(spec, pack, quote())
+    checks = check_suppliers([found], pack, FakeCrustdata(real_sellers))
+    decision = steps.decide(spec, found, checks, pack, date.today() + timedelta(days=30))
+    gateway = payments.MockGateway()
+    starting_balance = gateway.wallet.balance
+    save = gateway._save
+
+    def crash_before_confirmation(intent, db):
+        assert db.execute("SELECT count(*) FROM ledger WHERE kind = 'debit'").fetchone() == (1,)
+        raise RuntimeError("interrupted before payment confirmation")
+
+    monkeypatch.setattr(payments, "provider", lambda: gateway)
+    monkeypatch.setattr(gateway, "_save", crash_before_confirmation)
+    with pytest.raises(RuntimeError, match="interrupted"):
+        orders.place_order(decision, "capture-crash", approval_limit_inr=50_000)
+    assert gateway.wallet.balance == starting_balance
+    assert [o.state for o in orders.list_orders()] == ["PAY_PENDING"]
+    monkeypatch.setattr(gateway, "_save", save)
+    paid = orders.place_order(decision, "capture-crash", approval_limit_inr=50_000)
+    assert paid.state == "PAID"
+    assert gateway.wallet.balance == round(starting_balance - paid.amount_inr, 2)
+    assert len([e for e in gateway.wallet.ledger() if e["kind"] == "debit"]) == 1
+
+
+def test_concurrent_confirmation_recovers_legacy_debit():
+    gateway = payments.MockGateway()
+    intent, _ = gateway.create_intent("legacy", 100, "LCSC", "card")
+    gateway.wallet.debit(100, intent.id, "debit recorded by older gateway")
+    balance_after_debit = gateway.wallet.balance
+    gateway.wallet.set_limit(0)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        receipts = list(pool.map(gateway.confirm, (intent.id, intent.id)))
+    assert [receipt.status for receipt in receipts] == ["succeeded", "succeeded"]
+    assert gateway.wallet.balance == balance_after_debit
+    assert len([e for e in gateway.wallet.ledger() if e["kind"] == "debit"]) == 1
+    assert len([e for e in gateway.events() if e["type"] == "payment_intent.succeeded"]) == 1
+
+
+def test_negative_quote_and_payment_are_rejected(spec, pack, real_sellers):
+    found = priced(spec, pack, quote(price_inr=-5))
+    checks = check_suppliers([found], pack, FakeCrustdata(real_sellers))
+    decision = steps.decide(spec, found, checks, pack, None)
+    assert decision.status == "NONE" and decision.picked is None
+    gateway = payments.MockGateway()
+    with pytest.raises(ValueError, match="non-negative"):
+        gateway.create_intent("negative", -5, "LCSC", "card")
+    assert gateway.intents() == []
+
+
+@pytest.mark.parametrize("minimum, tier_minimum", [(600, 1), (1, 600)])
+def test_stock_covers_effective_purchase_quantity(spec, pack, real_sellers, minimum, tier_minimum):
+    supplier_quote = quote(stock=550)
+    supplier_quote.moq = minimum
+    supplier_quote.tiers[0].min_qty = tier_minimum
+    found = priced(spec, pack, supplier_quote)
+    assert supplier_quote.buy_qty == 600 and supplier_quote.status == Status.FOUND_UNFIT
+    checks = check_suppliers([found], pack, FakeCrustdata(real_sellers))
+    assert steps.decide(spec, found, checks, pack, None).status == "NONE"
+
+
+def test_unknown_arrival_rejected_only_with_deadline(spec, pack, real_sellers):
+    for distributor in pack["distributors"]:
+        if distributor["domain"] == "lcsc.com":
+            distributor["transit_days"] = None
+    found = priced(spec, pack, quote())
+    checks = check_suppliers([found], pack, FakeCrustdata(real_sellers))
+    deadline = date.today() + timedelta(days=30)
+    decision = steps.decide(spec, found, checks, pack, deadline)
+    assert decision.picked is None and decision.rejected[0]["rule"] == "arrival date unknown"
+    assert steps.decide(spec, found, checks, pack, None).status == "PICKED"
 
 
 # 1. Clean BOM, reliable vendors in stock -> plan and paid orders, each pick cited
