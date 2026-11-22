@@ -73,3 +73,6 @@ Desktop.ini
 runs/
 .cache/
 .ipynb_checkpoints/
+
+# Local clone of the team repository (not part of this project)
+/Team-Dakia/
