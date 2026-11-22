@@ -155,8 +155,9 @@ class Orchestrator:
                         self.llm().extract(run)
                     run.events.append(WorkflowEvent(state=run.state, message="Gemini provider evidence extraction saved with cited claims and explicit gaps. LLM claims do not authorize purchases."))
                 except (GeminiOutputError,IntegrationUnavailable) as exc:
-                    recoverable = (isinstance(exc,GeminiOutputError) and exc.code != "GEMINI_OUTPUT_BLOCKED") or "GEMINI_CALL_LIMIT" in str(exc)
-                    if not recoverable and not follow_up: raise
+                    # Supplier summaries are an enrichment: a timeout or provider error is recorded and
+                    # the run carries on with its deterministic checks. Missing setup still fails loudly.
+                    if "NOT_CONFIGURED" in str(exc) or "CREDENTIAL" in str(exc) or "DEPENDENCY" in str(exc): raise
                     run.extraction_warnings.append("Supplier insight generation unavailable: "+str(exc)+". Raw evidence retained; no model claims applied or automatic paid retry.")
                     run.events.append(WorkflowEvent(state=run.state,message=run.extraction_warnings[-1]))
             if live_company:

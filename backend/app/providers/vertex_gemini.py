@@ -69,7 +69,7 @@ class VertexGeminiTransport:
         except (OSError, ValueError, TypeError, KeyError):
             raise IntegrationUnavailable("GEMINI_VERTEX_CREDENTIAL_ERROR: external service-account file is unreadable, invalid, or belongs to a different project") from None
         self.sdk = genai.Client(vertexai=True, credentials=credentials, project=self.project, location=self.location,
-            http_options=types.HttpOptions(api_version="v1", timeout=45000, retry_options=types.HttpRetryOptions(attempts=1)))
+            http_options=types.HttpOptions(api_version="v1", timeout=120000, retry_options=types.HttpRetryOptions(attempts=1)))
 
     def post(self, path, json):
         # The existing extraction client has exactly one allowed generation operation.
