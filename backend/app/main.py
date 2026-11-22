@@ -7,7 +7,7 @@ import os
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import Field
 from typing import Literal
 from app.contracts import (Contract, SourcingRequest, WorkflowRun, WorkflowEvent, RunState as S,
@@ -87,6 +87,10 @@ def create_app(database: Database | None = None):
     def check_credit_cap(value):
         if max_credit_limit is not None and value is not None and value > max_credit_limit:
             raise ValueError(f"credit ceiling above {max_credit_limit:g} is not allowed on this hosted desk")
+
+    # Compress JSON and UI assets: run documents are polled every second and
+    # slow links (tunnels, mobile) are dominated by transfer size.
+    app.add_middleware(GZipMiddleware, minimum_size=500, compresslevel=6)
 
     @app.exception_handler(KeyError)
     async def missing(_, exc):
@@ -280,8 +284,8 @@ def create_app(database: Database | None = None):
     dist = os.getenv("FRONTEND_DIST")
     if dist and Path(dist, "index.html").is_file():
         root = Path(dist).resolve()
-        if (root / "assets").is_dir():
-            app.mount("/assets", StaticFiles(directory=root / "assets"), name="assets")
+        immutable = {"Cache-Control": "public, max-age=31536000, immutable"}
+        revalidate = {"Cache-Control": "no-cache"}
 
         @app.get("/{path:path}", include_in_schema=False)
         def spa(path: str):
@@ -289,8 +293,9 @@ def create_app(database: Database | None = None):
                 return JSONResponse(status_code=404, content={"error": {"code": "NOT_FOUND", "message": "Unknown API route"}})
             target = (root / path).resolve()
             if path and target.is_file() and target.is_relative_to(root):
-                return FileResponse(target)
-            return FileResponse(root / "index.html")
+                # Vite fingerprints everything under assets/, so it can be cached forever.
+                return FileResponse(target, headers=immutable if path.startswith("assets/") else revalidate)
+            return FileResponse(root / "index.html", headers=revalidate)
 
     return app
 

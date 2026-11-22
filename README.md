@@ -59,7 +59,7 @@ A modular monolith with a **separate durable worker**. The API only records inte
 | Persistence | `backend/app/persistence/` | SQLite run documents, reservations, double-entry-style ledger |
 | Packs | `backend/app/packs/` | Validated category policies (electronics, leather goods, general): scoring, freshness, demo tax and duty |
 | API | `backend/app/main.py` | FastAPI routes, passcode gate and spend caps for hosted use, static UI serving |
-| UI | `frontend/src/` | React 19, TypeScript, Vite and Tailwind chat client. Types generated from OpenAPI. |
+| UI | `frontend/src/` | React-API chat client (TypeScript, Vite, Tailwind) shipped on the Preact runtime: 19 KB gzipped JS, inline critical HTML/CSS for an instant first paint, immutable asset caching. Types generated from OpenAPI. |
 
 Deep dive: [architecture](docs/design/architecture.md), [contracts](docs/design/contracts.md), [LLM layer](docs/design/llm-layer.md), [human review](docs/design/human-review.md).
 

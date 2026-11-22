@@ -196,7 +196,7 @@ function App() {
   const [thread, setThread] = useState<Entry[]>(() => load('sourcing-thread', []));
   const [runs, setRuns] = useState<Record<string, Run>>({});
   const [missing, setMissing] = useState<Set<string>>(new Set());
-  const [text, setText] = useState('');
+  const [text, setText] = useState(() => (document.getElementById('shell-text') as HTMLTextAreaElement | null)?.value ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [locked, setLocked] = useState(false);
@@ -325,4 +325,20 @@ function App() {
   </div>;
 }
 
-createRoot(document.getElementById('root')!).render(<StrictMode><App/></StrictMode>);
+// index.html paints a static home page immediately. Mount once the stylesheet is in,
+// then swap: whatever was typed into the static prompt carries over.
+function stylesheetReady(): Promise<void> {
+  const link = document.getElementById('app-css') as HTMLLinkElement | null;
+  if (!link || link.sheet) return Promise.resolve();
+  return new Promise(resolve => {
+    const done = () => resolve();
+    link.addEventListener('load', done, { once: true });
+    link.addEventListener('error', done, { once: true });
+    setTimeout(done, 10000);
+  });
+}
+
+void stylesheetReady().then(() => {
+  createRoot(document.getElementById('root')!).render(<StrictMode><App/></StrictMode>);
+  requestAnimationFrame(() => document.getElementById('shell')?.remove());
+});
