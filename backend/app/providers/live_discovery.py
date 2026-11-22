@@ -128,6 +128,11 @@ class LiveDiscovery:
                     value=json.dumps({"title":fetched_page.get("title"),"timestamp":fetched_page.get("timestamp"),"content":content[:16000]}))
                 evidence.append(source)
                 refs.append(source.id)
+            elif not request.supplier_domains:
+                source = Evidence(reference=page, provider="crustdata_supplier_page", mode="live", status="unverified",
+                                  fact="Supplier page found by Crustdata", value=domain)
+                evidence.append(source)
+                refs.append(source.id)
             for spec in specs:
                 quotes.append(Quote(id=f"{spec.id}:{sid}", supplier_id=sid, spec_id=spec.id, currency="UNK", tiers={}, quantity=spec.quantity or 1,
                     stock=None, shipping_minor=None, lead_days=None, delivery_at=None, serves_destination=None,

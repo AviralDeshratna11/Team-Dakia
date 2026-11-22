@@ -1716,6 +1716,77 @@
         ],
         "title": "Order"
       },
+      "ProductPageDetail": {
+        "properties": {
+          "field": {
+            "type": "string",
+            "enum": [
+              "product_name",
+              "part_number",
+              "specifications",
+              "price",
+              "stock",
+              "minimum_order_quantity",
+              "shipping",
+              "delivery"
+            ],
+            "title": "Field"
+          },
+          "value": {
+            "type": "string",
+            "maxLength": 400,
+            "minLength": 1,
+            "title": "Value"
+          },
+          "excerpt": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Excerpt"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "field",
+          "value",
+          "excerpt"
+        ],
+        "title": "ProductPageDetail"
+      },
+      "ProductPageReading": {
+        "properties": {
+          "supplier_id": {
+            "type": "string",
+            "title": "Supplier Id"
+          },
+          "spec_id": {
+            "type": "string",
+            "title": "Spec Id"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "details": {
+            "items": {
+              "$ref": "#/components/schemas/ProductPageDetail"
+            },
+            "type": "array",
+            "maxItems": 12,
+            "title": "Details"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "supplier_id",
+          "spec_id",
+          "url",
+          "details"
+        ],
+        "title": "ProductPageReading"
+      },
       "Quote": {
         "properties": {
           "id": {
@@ -3165,6 +3236,13 @@
               }
             ]
           },
+          "product_page_readings": {
+            "items": {
+              "$ref": "#/components/schemas/ProductPageReading"
+            },
+            "type": "array",
+            "title": "Product Page Readings"
+          },
           "extraction_warnings": {
             "items": {
               "type": "string"
@@ -3217,6 +3295,7 @@
           "request_interpretation",
           "supplier_insights",
           "supplier_search",
+          "product_page_readings",
           "extraction_warnings",
           "human_reviews",
           "human_completed_spec_ids",

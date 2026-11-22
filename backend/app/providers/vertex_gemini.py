@@ -81,11 +81,14 @@ class VertexGeminiTransport:
         generation = json["generationConfig"]
         config = self.types.GenerateContentConfig(
             system_instruction=json["systemInstruction"]["parts"][0]["text"],
-            response_mime_type="application/json",
-            response_schema=vertex_schema(generation["responseJsonSchema"]),
             max_output_tokens=generation["maxOutputTokens"],
             automatic_function_calling=self.types.AutomaticFunctionCallingConfig(disable=True),
         )
+        if json.get("tools") == [{"urlContext": {}}]:
+            config.tools = [self.types.Tool(url_context=self.types.UrlContext())]
+        else:
+            config.response_mime_type = "application/json"
+            config.response_schema = vertex_schema(generation["responseJsonSchema"])
         if model.startswith("gemini-2.5-flash"):
             config.thinking_config = self.types.ThinkingConfig(thinking_budget=0)
         try:

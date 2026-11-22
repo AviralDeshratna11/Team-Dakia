@@ -16,15 +16,16 @@ from test_llm import fake_client, intent, response
 
 
 @pytest.mark.parametrize(
-    ("budget", "domains", "citation", "expected"),
+    ("budget", "domains", "citation", "expected", "browser_ok"),
     [
-        ("5", [], "valid", "completed"),
-        ("2.2", [], "valid", "skipped"),
-        ("5", [], "fabricated", "skipped"),
-        ("0.2", ["first.example"], "valid", None),
+        ("5", [], "valid", "completed", True),
+        ("1.2", [], "valid", "skipped", True),
+        ("2.2", [], "valid", "skipped", False),
+        ("5", [], "fabricated", "skipped", True),
+        ("0.2", ["first.example"], "valid", None, False),
     ],
 )
-def test_gemini_supplier_search_respects_evidence_and_credit_cap(tmp_path, budget, domains, citation, expected):
+def test_gemini_supplier_search_respects_evidence_and_credit_cap(tmp_path, budget, domains, citation, expected, browser_ok):
     first = "https://first.example/components"
     better = "https://better.example/esp32-s3"
     calls = []
@@ -53,11 +54,25 @@ def test_gemini_supplier_search_respects_evidence_and_credit_cap(tmp_path, budge
         pytest.fail(f"Unexpected Crustdata endpoint {path}")
 
     plan_data = []
+    browser_urls = []
 
     def gemini(request):
         body = json.loads(request.content)
-        schema = body["generationConfig"]["responseJsonSchema"]["title"]
         data = json.loads(body["contents"][0]["parts"][0]["text"])
+        if body.get("tools"):
+            assert body["tools"] == [{"urlContext": {}}]
+            assert "responseJsonSchema" not in body["generationConfig"]
+            browser_urls.extend(page["url"] for page in data["pages"])
+            assert browser_urls[0] == (better if expected == "completed" else first)
+            details = [{"field": "part_number", "value": "ESP32-S3", "excerpt": "Product: ESP32-S3"}]
+            outside = "https://outside.example/product"
+            result = response({"pages": [{"url": url, "details": details} for url in [browser_urls[0], outside]]}).json()
+            result["candidates"][0]["urlContextMetadata"] = {"urlMetadata": [
+                {"retrievedUrl": browser_urls[0], "urlRetrievalStatus": f"URL_RETRIEVAL_STATUS_{'SUCCESS' if browser_ok else 'ERROR'}"},
+                {"retrievedUrl": outside, "urlRetrievalStatus": "URL_RETRIEVAL_STATUS_SUCCESS"},
+            ]}
+            return httpx.Response(200, json=result)
+        schema = body["generationConfig"]["responseJsonSchema"]["title"]
         if schema == "ParsedIntent":
             return response(intent())
         if schema == "SupplierSearchPlan":
@@ -68,15 +83,6 @@ def test_gemini_supplier_search_respects_evidence_and_credit_cap(tmp_path, budge
             eid = "invented" if citation == "fabricated" else data["evidence"][0]["id"]
             return response({"search_terms": "authorized catalogue", "evidence_ids": [eid]})
         assert schema == "SupplierExtraction"
-        if [s["domain"] for s in data["suppliers"]] == ["better.example"]:
-            page, = [e for e in data["evidence"] if e["provider"] == "crustdata_web_fetch" and e["reference"] == better]
-            return response({"insights": [{
-                "supplier_id": "crustdata:2", "summary": "The supplier lists an ESP32-S3 catalogue.",
-                "evidence_ids": [page["id"]], "facts": [{
-                    "spec_id": data["specs"][0]["id"], "field": "matches_spec", "value": "true",
-                    "evidence_id": page["id"], "excerpt": "ESP32-S3 official product catalogue",
-                }],
-            }]})
         return response({"insights": []})
 
     db = Database(str(tmp_path / "state.db"))
@@ -95,8 +101,18 @@ def test_gemini_supplier_search_respects_evidence_and_credit_cap(tmp_path, budge
 
     search = run["supplier_search"]
     if expected is None:
-        assert search is None and calls == ["/company/identify"] and not plan_data
+        assert search is None and calls == ["/company/identify"] and not plan_data and not browser_urls
         return
+    expected_url = better if expected == "completed" else first
+    assert browser_urls == ([better, first] if expected == "completed" else [first])
+    if browser_ok:
+        page, = run["product_page_readings"]
+        assert page["url"] == expected_url and page["details"][0]["value"] == "ESP32-S3"
+    else:
+        assert not run["product_page_readings"]
+        assert any("GEMINI_URL_RETRIEVAL_FAILED" in warning for warning in run["extraction_warnings"])
+    if budget == "1.2":
+        assert "/web/enrich/live" not in calls
     assert search["status"] == expected
     if expected == "completed":
         assert len(queries) == 2 and "authorized catalogue" in queries[-1]
@@ -104,11 +120,11 @@ def test_gemini_supplier_search_respects_evidence_and_credit_cap(tmp_path, budge
         assert search["supplier_ids"] == ["crustdata:2"]
         assert any(e["reference"] == better and e["id"] in search["evidence_ids"] for e in run["evidence"])
         assert {call["stage"] for call in run["llm_usage"]} == {
-            "parse_request", "extract_provider_evidence", "plan_supplier_search", "extract_follow_up_evidence",
+            "parse_request", "extract_provider_evidence", "plan_supplier_search", "read_product_pages",
         }
         assert all(c["eligible"] is False for c in run["decisions"][0]["candidates"])
         lead, = [q for q in run["quotes"] if q["supplier_id"] == "crustdata:2"]
-        assert lead["matches_spec"] is True and lead["status"] == "unverified"
+        assert lead["matches_spec"] is None and lead["status"] == "unverified"
     else:
         assert len(queries) == 1 and not search["supplier_ids"]
         assert len(plan_data) == (1 if citation == "fabricated" else 0)

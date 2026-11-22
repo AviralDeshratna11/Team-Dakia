@@ -65,6 +65,8 @@ Enable the Gemini checkbox in a new dashboard request to use an LLM for (1) pars
 
 For a live run with **Use Gemini** enabled and the supplier domain left blank, Gemini can use the initial Crustdata evidence to refine the search for the first item with a purchasing or shortlist gap. The worker performs at most one follow-up search per run and fits the search, identity checks and page fetches inside the configured Crustdata credit ceiling. Open **Gemini intelligence** for the new leads, source pages and search status. Confirm purchase terms with supplier-issued evidence before checkout.
 
+When the plan still has a gap, Gemini can open up to two supplier pages returned by Crustdata via [URL Context](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/url-context). **Gemini intelligence → Product details from supplier pages** shows details only for pages Gemini reported retrieving successfully. Product specs, prices, stock, shipping and delivery are shown with their source and require purchase verification. Page reading uses the existing four-generation Gemini cap and spends no Crustdata credits.
+
 Stop any existing worker first. From `backend`, start a replacement with hidden key prompts:
 
 ```powershell

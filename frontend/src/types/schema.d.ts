@@ -620,6 +620,29 @@ export interface components {
             /** Payment Id */
             payment_id: string | null;
         };
+        /** ProductPageDetail */
+        ProductPageDetail: {
+            /**
+             * Field
+             * @enum {string}
+             */
+            field: "product_name" | "part_number" | "specifications" | "price" | "stock" | "minimum_order_quantity" | "shipping" | "delivery";
+            /** Value */
+            value: string;
+            /** Excerpt */
+            excerpt: string;
+        };
+        /** ProductPageReading */
+        ProductPageReading: {
+            /** Supplier Id */
+            supplier_id: string;
+            /** Spec Id */
+            spec_id: string;
+            /** Url */
+            url: string;
+            /** Details */
+            details: components["schemas"]["ProductPageDetail"][];
+        };
         /** Quote */
         Quote: {
             /** Id */
@@ -1199,6 +1222,8 @@ export interface components {
                 [key: string]: unknown;
             }[];
             supplier_search: components["schemas"]["SupplierSearchReport"] | null;
+            /** Product Page Readings */
+            product_page_readings: components["schemas"]["ProductPageReading"][];
             /** Extraction Warnings */
             extraction_warnings: string[];
             /** Human Reviews */

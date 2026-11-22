@@ -1,7 +1,7 @@
 """Narrow extraction contracts: no tools, spending decisions or identity overrides."""
 from typing import Literal
 from pydantic import Field
-from app.contracts.models import Contract
+from app.contracts.models import Contract, ProductPageDetail
 
 
 class Parameter(Contract):
@@ -59,3 +59,12 @@ class SupplierExtraction(Contract):
 class SupplierSearchPlan(Contract):
     search_terms: str = Field(max_length=200)
     evidence_ids: list[str] = Field(max_length=8)
+
+
+class WebProductPage(Contract):
+    url: str = Field(max_length=2000)
+    details: list[ProductPageDetail] = Field(max_length=12)
+
+
+class WebProductExtraction(Contract):
+    pages: list[WebProductPage] = Field(max_length=2)

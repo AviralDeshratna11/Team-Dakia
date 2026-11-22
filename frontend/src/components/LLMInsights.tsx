@@ -33,6 +33,19 @@ export function LLMInsights({ run }: { run: Run }) {
           <code key={source.id}>{source.provider} · {source.reference}</code>)}
       </details>}
     </div>}
+    {!!run.product_page_readings?.length && <div className="research-entry">
+      <h3>Product details from supplier pages</h3>
+      <p className="muted">Gemini read these pages directly. Confirm time-sensitive terms with the supplier before ordering.</p>
+      {run.product_page_readings.map(page => <div className="evidence" key={page.url}>
+        <strong>{run.suppliers.find(supplier => supplier.id === page.supplier_id)?.name ?? page.supplier_id}</strong>
+        <small>{run.specs.find(spec => spec.id === page.spec_id)?.description}</small>
+        <a href={page.url} target="_blank" rel="noreferrer">Open supplier page</a>
+        <dl>{page.details.map((detail, index) => <div key={`${detail.field}:${index}`}>
+          <dt>{detail.field.replaceAll('_', ' ')}</dt>
+          <dd>{detail.value}<small>{detail.excerpt}</small></dd>
+        </div>)}</dl>
+      </div>)}
+    </div>}
     {run.supplier_insights.map((insight, index) => {
       const supplierId = String(insight.supplier_id ?? '');
       const refs = Array.isArray(insight.evidence_ids) ? insight.evidence_ids.filter((id): id is string => typeof id === 'string') : [];

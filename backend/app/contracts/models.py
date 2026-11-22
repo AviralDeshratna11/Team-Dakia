@@ -323,6 +323,19 @@ class SupplierSearchReport(Contract):
     supplier_ids: list[str] = Field(default_factory=list)
 
 
+class ProductPageDetail(Contract):
+    field: Literal["product_name", "part_number", "specifications", "price", "stock", "minimum_order_quantity", "shipping", "delivery"]
+    value: str = Field(min_length=1, max_length=400)
+    excerpt: str = Field(min_length=1, max_length=500)
+
+
+class ProductPageReading(Contract):
+    supplier_id: str
+    spec_id: str
+    url: str
+    details: list[ProductPageDetail] = Field(max_length=12)
+
+
 class WorkflowRun(Contract):
     id: str = Field(default_factory=uid)
     request: SourcingRequest
@@ -346,6 +359,7 @@ class WorkflowRun(Contract):
     request_interpretation: dict[str, Any] | None = None
     supplier_insights: list[dict[str, Any]] = Field(default_factory=list)
     supplier_search: SupplierSearchReport | None = None
+    product_page_readings: list[ProductPageReading] = Field(default_factory=list)
     extraction_warnings: list[str] = Field(default_factory=list)
     human_reviews: list[HumanReviewTask] = Field(default_factory=list)
     human_completed_spec_ids: list[str] = Field(default_factory=list)

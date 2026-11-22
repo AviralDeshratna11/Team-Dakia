@@ -63,12 +63,15 @@ class GeminiClient:
             for column in ["diagnostic","finish_reason"]:
                 if column not in columns: c.exec_driver_sql(f"ALTER TABLE generations ADD COLUMN {column} TEXT")
 
-    def generate(self, run_id: str, stage: str, system: str, data: dict, schema: type[BaseModel]):
+    def generate(self, run_id: str, stage: str, system: str, data: dict, schema: type[BaseModel], *, page_urls=()):
         content = json.dumps(data, ensure_ascii=False, sort_keys=True)
         if len(content) > 60000:
             raise IntegrationUnavailable("GEMINI_INPUT_LIMIT: extraction input exceeds 60000 characters")
         contract = schema.model_json_schema()
-        key = hashlib.sha256(json.dumps([self.backend,self.model,stage,system,content,contract],sort_keys=True).encode()).hexdigest()
+        cache_data = [self.backend, self.model, stage, system, content, contract]
+        if page_urls:
+            cache_data.append(list(page_urls))
+        key = hashlib.sha256(json.dumps(cache_data,sort_keys=True).encode()).hexdigest()
         call_id = f"{run_id}:{key}"
         with self.engine.connect() as c:
             c.exec_driver_sql("BEGIN IMMEDIATE")
@@ -86,6 +89,10 @@ class GeminiClient:
         payload = {"systemInstruction":{"parts":[{"text":system}]},
                    "contents":[{"role":"user","parts":[{"text":content}]}],
                    "generationConfig":{"responseMimeType":"application/json", "responseJsonSchema":contract, "maxOutputTokens":4096}}
+        if page_urls:
+            # Gemini 2.5 supports URL Context with text output. Validate the JSON locally.
+            payload["tools"] = [{"urlContext": {}}]
+            payload["generationConfig"] = {"maxOutputTokens": 4096}
         try:
             response = self.http.post(f"/v1beta/models/{self.model}:generateContent",json=payload)
         except httpx.TransportError:
@@ -110,8 +117,20 @@ class GeminiClient:
                     raise GeminiOutputError(code,"Output did not complete; no automatic regeneration")
                 parts = candidate.get("content", {}).get("parts", [])
                 text = "".join(p.get("text", "") for p in parts if not p.get("thought", False))
-                result = schema.model_validate(normalize_extraction(schema,json.loads(text)))
+                if page_urls:
+                    fence = re.fullmatch(r"\s*```(?:json)?\s*(.*?)\s*```\s*", text, re.DOTALL | re.IGNORECASE)
+                    text = fence[1] if fence else text
+                value = normalize_extraction(schema, json.loads(text))
+                result = schema.model_validate(value)
+                if page_urls:
+                    urls = candidate.get("urlContextMetadata", {}).get("urlMetadata", [])
+                    retrieved = {item.get("retrievedUrl") for item in urls
+                                 if item.get("urlRetrievalStatus") == "URL_RETRIEVAL_STATUS_SUCCESS"}
+                    result.pages = [page for page in result.pages if page.url in retrieved and page.url in page_urls]
+                    if not retrieved.intersection(page_urls):
+                        raise GeminiOutputError("GEMINI_URL_RETRIEVAL_FAILED", "No requested page was retrieved")
             except GeminiOutputError as exc:
+                result = None
                 error = exc.code
                 diagnostic = str(exc).split(": ",1)[1].removesuffix("; no extraction applied")
             except ValidationError as exc:
@@ -119,6 +138,7 @@ class GeminiClient:
                 # Locations/types are safe diagnostics; never include generated field values.
                 diagnostic = "; ".join(".".join(map(str,e["loc"]))+" ("+e["type"]+")" for e in exc.errors(include_input=False,include_context=False,include_url=False)[:5])
             except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+                result = None
                 error = "GEMINI_SCHEMA_INVALID"
                 diagnostic = "Response was not valid structured JSON"
         def tokens(name):

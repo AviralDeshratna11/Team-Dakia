@@ -22,6 +22,7 @@ from app.providers.gemini import GeminiClient, GeminiOutputError
 from app.services.llm_extraction import LLMExtractionService
 from app.services.human_review import open_review
 from app.services.supplier_search import search_for_supplier
+from app.services.product_pages import product_pages_for, read_product_pages
 
 ACTIVE = {S.CREATED, S.PARSING, S.DISCOVERING, S.VERIFYING, S.RESEARCHING, S.DECIDING, S.SCREENING, S.EXECUTING}
 
@@ -137,7 +138,8 @@ class Orchestrator:
             if live_company and self.live_verify_step(run, pack):
                 return
             follow_up = run.stage_attempts.pop("verify_supplier_search", 0)
-            if run.request.llm_enabled:
+            browse_after_follow_up = follow_up and product_pages_for(run, [run.supplier_search.spec_id])
+            if run.request.llm_enabled and not browse_after_follow_up:
                 try:
                     if follow_up:
                         self.llm().extract(run, follow_up=run.supplier_search)
@@ -182,6 +184,16 @@ class Orchestrator:
                     transition(run, S.VERIFYING, run.supplier_search.message)
                     return
                 run.events.append(WorkflowEvent(state=run.state, message=run.supplier_search.message))
+            if (blocked and run.request.mode == "live" and run.request.llm_enabled
+                    and not run.stage_attempts.get("read_product_pages")
+                    and not any(task.resolution in {"evaluate_quotes", "manual_completion"} for task in run.human_reviews)):
+                pages = product_pages_for(run, [decision.spec_id for decision in blocked])
+                if pages:
+                    run.stage_attempts["read_product_pages"] = 1
+                    read_product_pages(run, pages, lambda *args, **kwargs: self.llm().client.generate(*args, **kwargs))
+                    if run.product_page_readings:
+                        run.events.append(WorkflowEvent(state=run.state,
+                            message=f"Gemini read product details from {len(run.product_page_readings)} supplier pages. The details require purchase verification."))
             if blocked and run.request.human_review_enabled:
                 reasons = sorted({reason for d in blocked for candidate in d.candidates for reason in candidate.reason_codes})
                 if not reasons: reasons = ["NO_ELIGIBLE_SUPPLIER_OR_INSUFFICIENT_SHORTLIST"]

@@ -6,7 +6,7 @@ from app.config import load_local_environment
 from app.providers.gemini import GeminiClient
 from app.providers.interfaces import IntegrationUnavailable
 from app.providers.vertex_gemini import VertexGeminiTransport
-from app.contracts.llm import ParsedIntent
+from app.contracts.llm import ParsedIntent, WebProductExtraction
 
 
 @pytest.mark.parametrize("model",["claude-sonnet-4", "llama-3", "imagen-4", "veo-3", "publishers/anthropic/models/claude", "projects/other/models/gemini-2.5-flash"])
@@ -43,6 +43,33 @@ def test_vertex_transport_rejects_other_operations_without_sdk_call():
     for path in ["/v1beta/models/imagen-4:generateContent","/v1beta/models/gemini-2.5-flash:embedContent","/projects/example/secrets"]:
         with pytest.raises(IntegrationUnavailable,match="GEMINI_ONLY"):
             transport.post(path,{})
+
+
+def test_vertex_url_context_uses_retrieval_metadata_and_local_json_validation(tmp_path):
+    url = "https://vendor.example/products/widget"
+    output = {"pages": [{"url": url, "details": []}]}
+    calls = []
+
+    def generate(**kwargs):
+        calls.append(kwargs)
+        return types.GenerateContentResponse(candidates=[types.Candidate(
+            finish_reason="STOP",
+            content=types.Content(parts=[types.Part(text="```json\n" + json.dumps(output) + "\n```")]),
+            url_context_metadata=types.UrlContextMetadata(url_metadata=[
+                types.UrlMetadata(retrieved_url=url, url_retrieval_status="URL_RETRIEVAL_STATUS_SUCCESS"),
+            ]),
+        )])
+
+    sdk = SimpleNamespace(models=SimpleNamespace(generate_content=generate))
+    client = GeminiClient(backend="vertex", model="gemini-2.5-flash", vertex_client=sdk, journal_path=tmp_path / "url.db")
+    for _ in range(2):
+        result = client.generate("run", "read_product_pages", "Read this page", {"url": url},
+                                 WebProductExtraction, page_urls=(url,))
+        assert result.pages[0].url == url
+    assert len(calls) == 1
+    config = calls[0]["config"]
+    assert config.tools[0].url_context is not None
+    assert config.response_mime_type is None and config.response_schema is None
 
 
 def test_vertex_schema_flattens_definitions_and_nullable_json_unions():
