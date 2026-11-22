@@ -20,6 +20,9 @@ from desk.steps import PACKS_DIR
 
 DRAFTS_DIR = PACKS_DIR / "drafts"
 
+# Made-to-order fields: is it a real factory or a trader? (Job Search + Person Search titles; see check.py)
+FACTORY_SIGNAL = {'weight': 2, 'max_people': 5, 'factory_keywords': ['operator', 'machine', 'production', 'stitch', 'tailor', 'cutting', 'quality', 'qc', 'supervisor', 'factory', 'plant', 'karigar', 'tannery', 'technician', 'maintenance', 'manufactur'], 'trader_keywords': ['sales', 'business development', 'export', 'merchandis', 'marketing', 'trader', 'trading', 'sourcing', 'account manager'], 'contact_keywords': ['sales', 'export', 'business development', 'marketing', 'proprietor', 'owner', 'director', 'founder', 'partner', 'manager']}
+
 
 class PackDraft(BaseModel):
     name: str                        # snake_case field name, e.g. leather_goods
@@ -88,6 +91,7 @@ def draft_pack(category: str, request_text: str, cd: Crustdata, base: dict) -> t
         "rfq": {"max_vendors": 3, "questions": d.rfq_questions},
         "trust_signals": d.trust_signals,
         "typical_moq": d.typical_moq,
+        "factory_signal": FACTORY_SIGNAL,
         "investigate": {"leads_per_part": 0},
         "unknown_vendor": {"ships_from": "IN", "transit_days": 7, "shipping_inr": 1500, "free_shipping_over_inr": None},
         "reliability": {**base["reliability"], "min_score": 0.5,

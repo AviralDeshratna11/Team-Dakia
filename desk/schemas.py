@@ -161,6 +161,7 @@ class Check(BaseModel):
     score: float | None              # weighted share of signals that passed, 0..1
     signals: list[Signal]
     reason: str
+    contacts: list[dict] = []        # people at the company (name, title, profile), sales-type roles first
 
 
 # ---------- step 5: decide ----------

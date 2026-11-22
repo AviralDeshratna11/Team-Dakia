@@ -80,6 +80,7 @@ def rfq_step(rkey: str, specs: list, finds: list, checks: list, pack: dict, deli
     check first and never to a REJECTED seller; advance any thread that's our move; add quoted threads to
     the part's quotes (step 5 then decides)."""
     score = {c.vendor_domain: (c.status != "REJECTED", c.score or 0) for c in checks}
+    contact = {c.vendor_domain: c.contacts[0] for c in checks if c.contacts}
     out = []
     for s, f in zip(specs, finds):
         has_usable = any(q.status == Status.FOUND for q in f.quotes)
@@ -89,7 +90,11 @@ def rfq_step(rkey: str, specs: list, finds: list, checks: list, pack: dict, deli
                          key=lambda q: score[q.vendor_domain][1], reverse=True)
         if not has_usable:
             for q in targets[:cfg.get("max_vendors", 3)]:
-                rfq.open_thread(rkey, s, q.vendor, q.vendor_domain, deliver_to, deadline, questions=cfg.get("questions"))
+                who = contact.get(q.vendor_domain)
+                email = (f"{who['name']} ({who['title']}), {who['profile_url'] or 'no profile'}: "
+                         "email not enriched (mock mailbox)") if who else None
+                rfq.open_thread(rkey, s, q.vendor, q.vendor_domain, deliver_to, deadline, vendor_email=email,
+                                questions=cfg.get("questions"))
         for t in rfq.threads(rkey):
             if t.line_id != s.line_id:
                 continue

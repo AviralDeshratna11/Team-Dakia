@@ -56,6 +56,20 @@ def _check_one(vendor: str, domain: str, seller_domain: str, dist: dict, pack: d
                      signals=[Signal(name="real_company", value="no company record", ok=False,
                                      weight=w["real_company"], source=src)],
                      reason=f"{seller_domain} doesn't resolve to any company")
+    if company_id is None or not seller_domain.startswith("crustdata-"):
+        # Confidence is 1.0 even for wrong matches (amazon.in -> 'Indian.amazon', 'BioLaughs'), so the
+        # company must list this domain as its own, and all such matches must be the same company.
+        owned = [m for m in good if seller_domain in _domains(m["company_data"])]
+        ids = {m["company_data"].get("crustdata_company_id") for m in owned}
+        if len(ids) != 1:
+            names = ", ".join((m["company_data"].get("basic_info") or {}).get("name") or "?" for m in good[:3])
+            why = (f"{len(ids)} different companies list {seller_domain} as their own ({names})" if ids
+                   else f"Crustdata matched {seller_domain} to {names}, but none lists it as its own domain")
+            return Check(**base, company_id=None, company_name=None, status="UNVERIFIED", score=None,
+                         signals=[Signal(name="real_company", value=why, ok=None, weight=w["real_company"],
+                                         source=src)],
+                         reason=f"can't tell which company is behind {seller_domain}: {why}")
+        good = owned
 
     co = good[0]["company_data"]
     info = co.get("basic_info") or {}
@@ -99,6 +113,12 @@ def _check_one(vendor: str, domain: str, seller_domain: str, dist: dict, pack: d
                               else "not an authorized distributor", ok=bool(dist["authorized"]),
                               weight=w["authorized"], source="category pack"))
 
+    contacts = []
+    fs = pack.get("factory_signal")
+    if fs:
+        sig, contacts = _factory_signal(cd, cid, fs, ((e or {}).get("locations") or {}).get("headquarters"))
+        signals.append(sig)
+
     checked = [s for s in signals if s.ok is not None]
     score = round(sum(s.weight for s in checked if s.ok) / sum(s.weight for s in signals), 3)
     missing = [s.name for s in signals if s.ok is None]
@@ -109,4 +129,42 @@ def _check_one(vendor: str, domain: str, seller_domain: str, dist: dict, pack: d
               + (f"; failed: {', '.join(failed)}" if failed else "")
               + (f"; couldn't check: {', '.join(missing)}" if missing else ""))
     return Check(**base, company_id=cid, company_name=name, status="UNVERIFIED" if missing else "VERIFIED",
-                 score=score, signals=signals, reason=reason)
+                 score=score, signals=signals, reason=reason, contacts=contacts)
+
+
+def _factory_signal(cd: Crustdata, cid: int, cfg: dict, hq: str | None) -> tuple[Signal, list[dict]]:
+    """Factory or trader? A factory hires and employs production roles; a trader mostly sales/export.
+    Evidence: the company's job postings and current staff titles (Crustdata Job Search + Person Search).
+    Staff outside the company's HQ country are dropped (namesake matches)."""
+    factory_kw = [k.lower() for k in cfg["factory_keywords"]]
+    trader_kw = [k.lower() for k in cfg["trader_keywords"]]
+    try:
+        jobs = [((j.get("job_details") or {}).get("title") or "") for j in cd.job_search(cid)]
+        people = cd.person_search(cid, limit=cfg.get("max_people", 5))
+    except CrustdataError as err:
+        return Signal(name="factory", value=None, ok=None, weight=cfg["weight"], source=f"Job/Person Search failed: {err}"), []
+    staff, contacts = [], []
+    for p in people:
+        bp = p.get("basic_profile") or {}
+        country = (bp.get("location") or {}).get("country")
+        if hq and country and country.lower() not in hq.lower():
+            continue                     # e.g. a namesake in another country
+        title = bp.get("current_title") or ""
+        staff.append(title)
+        url = ((p.get("social_handles") or {}).get("professional_network_identifier") or {}).get("profile_url")
+        contacts.append({"name": bp.get("name"), "title": title, "profile_url": url})
+    contact_kw = [k.lower() for k in cfg.get("contact_keywords", [])]
+    contacts.sort(key=lambda c: not any(k in (c["title"] or "").lower() for k in contact_kw))
+
+    titles = [t for t in jobs + staff if t]
+    fac = [t for t in titles if any(k in t.lower() for k in factory_kw)]
+    trd = [t for t in titles if any(k in t.lower() for k in trader_kw)]
+    src = f"Crustdata Job Search ({len(jobs)} postings) + Person Search ({len(staff)} staff)"
+    if fac:
+        return Signal(name="factory", value=f"production roles: {', '.join(fac[:4])}", ok=True,
+                      weight=cfg["weight"], source=src), contacts
+    if trd:
+        return Signal(name="factory", value=f"likely a trader: only sales/export roles ({', '.join(trd[:4])})",
+                      ok=False, weight=cfg["weight"], source=src), contacts
+    return Signal(name="factory", value=f"no production or sales roles seen ({len(titles)} titles)" if titles else None,
+                  ok=None, weight=cfg["weight"], source=src), contacts

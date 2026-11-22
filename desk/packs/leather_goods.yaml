@@ -73,3 +73,44 @@ landed_cost:
   import_duty_rate: 0.0
   gst_rate: 0.18
   placeholder_rates: true
+factory_signal:
+  weight: 2
+  max_people: 5
+  factory_keywords:
+  - operator
+  - machine
+  - production
+  - stitch
+  - tailor
+  - cutting
+  - quality
+  - qc
+  - supervisor
+  - factory
+  - plant
+  - karigar
+  - tannery
+  - technician
+  - maintenance
+  - manufactur
+  trader_keywords:
+  - sales
+  - business development
+  - export
+  - merchandis
+  - marketing
+  - trader
+  - trading
+  - sourcing
+  - account manager
+  contact_keywords:
+  - sales
+  - export
+  - business development
+  - marketing
+  - proprietor
+  - owner
+  - director
+  - founder
+  - partner
+  - manager

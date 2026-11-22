@@ -123,6 +123,24 @@ class Crustdata:
                                      label=f"company_search: {query}")
         return (entry["response"] or {}).get("companies", [])
 
+    def job_search(self, company_id: int, limit: int = 25) -> list[dict]:
+        """A company's job postings (title, category, date). Factories hire operators; traders hire sales."""
+        body = {"filters": {"field": "company.basic_info.company_id", "type": "=", "value": company_id},
+                "fields": ["job_details.title", "job_details.category", "metadata.date_added", "location.raw"],
+                "limit": limit, "sorts": [{"field": "metadata.date_added", "order": "desc"}]}
+        entry = self._cached_or_call(cache_key("job_search", body), "/job/search", body,
+                                     label=f"job_search: company {company_id}")
+        return (entry["response"] or {}).get("job_listings", [])
+
+    def person_search(self, company_id: int, limit: int = 5) -> list[dict]:
+        """People currently at a company (name, title, profile). No emails: those need enrichment."""
+        body = {"filters": {"field": "experience.employment_details.current.company_id", "type": "=",
+                            "value": company_id}, "limit": limit}
+        entry = self._cached_or_call(cache_key("person_search", body), "/person/search", body,
+                                     label=f"person_search: company {company_id}")
+        resp = entry["response"] or {}
+        return resp.get("profiles") or resp.get("people") or resp.get("results") or []
+
     def credits_left(self) -> dict:
         r = httpx.get(f"{BASE}/account/credits", headers=self._headers(), timeout=30)
         r.raise_for_status()
