@@ -9,3 +9,4 @@ runs/
 gen-lang-client-*.json
 *service-account*.json
 checkout_mock.db
+rfq.db

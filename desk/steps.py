@@ -117,11 +117,13 @@ def assess_quote(q: Quote, spec: Spec, pack: dict) -> Quote:
     _price_at_qty(q, spec.qty, pack["fx_to_inr"])
     if q.unit_price is None:
         q.status, q.note = Status.GAP, "no price on page"
-    elif q.stock is None:
+    elif q.stock is None and q.lead_time_days is None:
         q.status, q.note = Status.GAP, "stock not on page"
+    elif q.stock is None:
+        q.note = f"no stock figure; vendor commits to {q.lead_time_days} days lead time"
     elif q.ships_to_india is False:
         q.status, q.note = Status.FOUND_UNFIT, "doesn't ship to India"
-    elif q.stock < spec.qty:
+    elif q.stock is not None and q.stock < spec.qty:
         q.status, q.note = Status.FOUND_UNFIT, f"stock {q.stock} < need {spec.qty}"
     elif q.buy_qty and q.buy_qty > spec.qty:
         q.note = f"MOQ forces buying {q.buy_qty}"
@@ -265,6 +267,8 @@ def landed_cost(q: Quote, need_qty: int, dist: dict, pack: dict) -> LandedCost:
     gst = cfg["gst_rate"] * (goods + shipping + duty)
     total = goods + shipping + duty + gst
     days = dist.get("transit_days")
+    if days is not None and q.lead_time_days:
+        days += q.lead_time_days
     return LandedCost(goods_inr=round(goods, 2), shipping_inr=round(shipping, 2), duty_inr=round(duty, 2),
                       gst_inr=round(gst, 2), total_inr=round(total, 2), per_unit_inr=round(total / need_qty, 4),
                       arrives_by=date.today() + timedelta(days=days) if days is not None else None,

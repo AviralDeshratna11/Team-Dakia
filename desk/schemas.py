@@ -109,7 +109,8 @@ class Quote(BaseModel):
     tiers: list[PriceTier] = []
     params: dict[str, str] = {}
     flags: list[str] = []            # e.g. possible clone: shown to the founder, never auto-picked
-    found_by: str = "catalogue"      # "catalogue" (fixed recipe) or "agent" (investigated lead)
+    found_by: str = "catalogue"      # "catalogue" (fixed recipe), "agent" (investigated lead) or "rfq"
+    lead_time_days: int | None = None    # from an RFQ: the vendor's committed lead time
     seller_type: str | None = None   # from the agent: manufacturer, authorized_distributor, marketplace, ...
     ships_to_india: bool | None = None   # from the agent; catalogue vendors use the pack instead
     evidence: list[str] = []         # the agent's facts, each with its source

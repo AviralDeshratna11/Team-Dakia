@@ -2,6 +2,8 @@
 python -m desk show [run_id]          # latest run if omitted
 python -m desk orders                 # every order and its state
 python -m desk approve <order_key>    # approve a held order; the next run pays it
+python -m desk rfq [thread_id]        # RFQ threads, or one thread's emails
+python -m desk rfq reply <thread_id> "text"   # reply as the vendor (a teammate, in the hackathon)
 """
 
 import argparse
@@ -10,7 +12,7 @@ import sys
 
 import pandas as pd
 
-from desk import orders, pipeline, view
+from desk import orders, pipeline, rfq, view
 from desk.trace import load_run
 
 pd.set_option("display.width", 200)
@@ -54,6 +56,9 @@ def show(records: list[dict]) -> None:
                     print(f"      red flag: {f}")
             for q in o["quotes"]:
                 print(f"  -> agent quote: {q['vendor']} {q['status']} ₹{q['unit_price_inr']}/unit {q['note']}")
+        if r["step"] == "02c_rfq" and o:
+            for t in o:
+                print(f"  RFQ [{t['line_id']}] {t['vendor']}: {t['status']}" + (f" - {t['escalation']}" if t["escalation"] else ""))
         if r["step"] == "03_check" and o:
             print()
             for c in o:
@@ -70,6 +75,16 @@ def show(records: list[dict]) -> None:
                   + (f" - {o['payment_id']}" if o["payment_id"] else ""))
         if r.get("error"):
             print(f"ERROR in {r['step']} [{r['part']}]: {r['error'].strip().splitlines()[-1]}")
+
+
+def show_thread(t) -> None:
+    print(f"{t.thread_id} {t.status}: {t.vendor} <{t.vendor_email}> [{t.line_id}] {t.qty} x {t.part}")
+    for m in t.messages:
+        print(f"\n--- {m.direction.upper()} {m.at} | {m.subject}\n{m.body}")
+    if t.quote:
+        print(f"\nQUOTE: {t.quote}")
+    if t.escalation:
+        print(f"\nESCALATED: {t.escalation}")
 
 
 def ask_founder(q) -> str:
@@ -90,6 +105,8 @@ def main() -> None:
     sub.add_parser("orders")
     ap = sub.add_parser("approve")
     ap.add_argument("order_key")
+    rq = sub.add_parser("rfq")
+    rq.add_argument("args", nargs="*", help="[thread_id] | reply <thread_id> <text>")
     a = p.parse_args()
 
     if a.cmd == "run":
@@ -109,6 +126,16 @@ def main() -> None:
         print(view.orders().to_string(index=False))
         print("\nvendor checkout (mock) charges:")
         print(pd.DataFrame(orders.checkout_payments()).to_string(index=False))
+    elif a.cmd == "rfq":
+        if a.args[:1] == ["reply"]:
+            t = rfq.vendor_reply(a.args[1], " ".join(a.args[2:]))
+            print(f"{t.thread_id}: vendor replied. The next run of the request lets the agent read it.")
+        elif a.args:
+            show_thread(rfq.get(a.args[0]))
+        else:
+            for t in rfq.threads():
+                print(f"{t.thread_id}  {t.status:11} {t.vendor} [{t.line_id}] {len(t.messages)} emails"
+                      + (f" - {t.escalation}" if t.escalation else "") + (f" - quote {t.quote}" if t.quote else ""))
     elif a.cmd == "approve":
         o = orders.approve(a.order_key)
         print(f"{o.idempotency_key}: {o.state}. Re-run the request to pay it.")

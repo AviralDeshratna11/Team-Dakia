@@ -10,6 +10,7 @@ import yaml
 
 from desk import steps
 from desk.crustdata import Crustdata
+from desk import rfq
 from desk.investigate import investigate_leads
 from desk.schemas import Question, Request, SpecResult, Status
 from desk.trace import Run
@@ -53,6 +54,28 @@ def clarify_specs(r: Run, req: Request, packs: dict, ask: Ask | None) -> SpecRes
     return sr
 
 
+def rfq_step(rkey: str, specs: list, finds: list, pack: dict, deliver_to, deadline) -> list[dict]:
+    """Open RFQs to sellers we found but couldn't price (only for parts with no usable quote), advance any
+    thread that's our move, and add quoted threads to the part's quotes (step 5 then decides)."""
+    out = []
+    for s, f in zip(specs, finds):
+        has_usable = any(q.status == Status.FOUND for q in f.quotes)
+        for q in f.quotes:
+            if q.found_by == "agent" and q.status == Status.GAP and not has_usable:
+                rfq.open_thread(rkey, s, q.vendor, q.vendor_domain, deliver_to, deadline)
+        for t in rfq.threads(rkey):
+            if t.line_id != s.line_id:
+                continue
+            res = rfq.run_thread(t)
+            t = rfq.get(t.thread_id)
+            q = rfq.quote_from(t, s, pack["fx_to_inr"])
+            if q:
+                f.quotes = [x for x in f.quotes if x.vendor_domain != q.vendor_domain] + [steps.assess_quote(q, s, pack)]
+            out.append({"line_id": s.line_id, "thread": t.thread_id, "vendor": t.vendor, "status": t.status,
+                        "agent_ran": res is not None, "escalation": t.escalation, "quote": t.quote})
+    return out
+
+
 def run(request_path: str | Path, use_cache: bool = True, ask: Ask | None = None) -> Run:
     req = load_request(request_path)
     packs = steps.load_packs()
@@ -69,6 +92,7 @@ def run(request_path: str | Path, use_cache: bool = True, ask: Ask | None = None
         inv = r.step("02b_investigate", investigate_leads, s, f, pack, cd, part=s.line_id)
         f.quotes += [q for q in inv.quotes if q.status != Status.NO_MATCH]
         f.alternatives += [q for q in inv.quotes if q.status == Status.NO_MATCH]
+    r.step("02c_rfq", rfq_step, rkey, specs, finds, pack, sr.deliver_to, sr.deadline)
     checks = r.step("03_check", steps.check_suppliers, finds, pack, cd)
     r.step("04_buy_data", steps.buy_data, finds, sr.data_budget_inr or 0)
     decisions = [r.step("05_decide", steps.decide, s, f, checks, pack, sr.deadline, part=s.line_id)
