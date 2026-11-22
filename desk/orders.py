@@ -2,8 +2,8 @@
 
 Orders live in desk.db and move PLANNED -> APPROVED -> PAY_PENDING -> PAID, saved at every step.
 The idempotency key depends only on what is being bought (request, line, vendor, part, qty), so a
-re-run finds the same order and resumes from its saved state. The mock vendor checkout (a separate
-database, standing in for the vendor's side) refuses to charge the same key twice.
+re-run finds the same order and resumes from its saved state. Payment goes through the payment provider
+(payments.py: a mock gateway + agent wallet), which never charges the same key twice.
 """
 
 from __future__ import annotations
@@ -11,14 +11,12 @@ from __future__ import annotations
 import hashlib
 import os
 import sqlite3
-import uuid
 from datetime import datetime
 
-from desk import ROOT
+from desk import ROOT, payments
 from desk.schemas import Decision, Order
 
 ORDERS_DB = ROOT / "desk.db"
-CHECKOUT_DB = ROOT / "checkout_mock.db"
 
 
 class SimulatedCrash(RuntimeError):
@@ -69,32 +67,13 @@ def approve(key: str) -> Order:
     return _save(o, "approved by the founder")
 
 
-# ---------- the vendor's side (mock) ----------
-
-def _checkout_db() -> sqlite3.Connection:
-    db = sqlite3.connect(CHECKOUT_DB)
-    db.execute("""CREATE TABLE IF NOT EXISTS payments (idempotency_key TEXT PRIMARY KEY, payment_id TEXT NOT NULL,
-                  vendor TEXT NOT NULL, amount_inr REAL NOT NULL, created_at TEXT NOT NULL)""")
-    return db
-
-
-def checkout_pay(key: str, vendor: str, amount_inr: float) -> tuple[str, bool]:
-    """Charge once per key. Returns (payment_id, replayed). A repeated key returns the first payment."""
-    with _checkout_db() as db:
-        row = db.execute("SELECT payment_id, amount_inr FROM payments WHERE idempotency_key = ?", (key,)).fetchone()
-        if row:
-            if abs(row[1] - amount_inr) > 0.01:
-                raise ValueError(f"key {key} reused with a different amount ({row[1]} vs {amount_inr})")
-            return row[0], True
-        pid = "pay_" + uuid.uuid4().hex[:12]
-        db.execute("INSERT INTO payments VALUES (?, ?, ?, ?, ?)", (key, pid, vendor, amount_inr, _now()))
-        return pid, False
-
+# ---------- what was actually charged (the payment provider's records) ----------
 
 def checkout_payments() -> list[dict]:
-    with _checkout_db() as db:
-        rows = db.execute("SELECT * FROM payments ORDER BY created_at").fetchall()
-    return [dict(zip(["idempotency_key", "payment_id", "vendor", "amount_inr", "created_at"], r)) for r in rows]
+    """Every payment intent at the provider: one per order, however often the pipeline re-runs."""
+    return [{"intent": i.id, "idempotency_key": i.idempotency_key, "payee": i.payee, "method": i.method,
+             "amount_inr": i.amount_inr, "status": i.status, "failure": i.failure_reason, "at": i.created_at}
+            for i in payments.provider().intents()]
 
 
 # ---------- step 6 ----------
@@ -105,7 +84,9 @@ def order_key(request_key: str, decision: Decision) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
-def place_order(decision: Decision, request_key: str, approval_limit_inr: float) -> Order | None:
+def place_order(decision: Decision, request_key: str, approval_limit_inr: float,
+                method: str = "card") -> Order | None:
+    """method: card (vendor checkout) or bank_transfer (RFQ vendors are paid against their invoice)."""
     if decision.status != "PICKED" or decision.picked is None:
         return None
     q = decision.picked
@@ -128,9 +109,18 @@ def place_order(decision: Decision, request_key: str, approval_limit_inr: float)
         o.state = "PAY_PENDING"
         _save(o, "sending payment to vendor checkout")
     if o.state == "PAY_PENDING":
-        pid, replayed = checkout_pay(o.idempotency_key, o.vendor, o.amount_inr)
+        gw = payments.provider()
+        intent, created = gw.create_intent(o.idempotency_key, o.amount_inr, o.vendor, method,
+                                           {"order": o.idempotency_key, "line": o.line_id, "mpn": o.mpn})
+        replayed = not created and intent.status == "succeeded"
+        intent = gw.confirm(intent.id) if intent.status == "requires_confirmation" else \
+            gw.retry(intent.id) if intent.status == "failed" else intent
+        if intent.status == "failed":
+            o.state, o.held_reason = "APPROVED", f"payment failed: {intent.failure_reason}"
+            return _save(o, f"{gw.name} {intent.id} failed ({intent.failure_reason}); will retry on the next run")
         if os.environ.get("DESK_CRASH_AT") == "after_charge" and not replayed:
-            raise SimulatedCrash(f"crashed after the vendor charged {pid}, before we recorded it")
-        o.state, o.payment_id = "PAID", pid
-        _save(o, f"paid {pid}" + (" (checkout replayed the earlier charge: not charged twice)" if replayed else ""))
+            raise SimulatedCrash(f"crashed after {gw.name} charged {intent.id}, before we recorded it")
+        o.state, o.payment_id, o.held_reason = "PAID", intent.id, None
+        _save(o, f"paid via {gw.name} {method} {intent.id}"
+              + (" (provider returned the earlier payment for this key: not charged twice)" if replayed else ""))
     return o

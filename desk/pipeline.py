@@ -131,5 +131,6 @@ def run(request_path: str | Path, use_cache: bool = True, ask: Ask | None = None
     decisions = [r.step("05_decide", steps.decide, s, f, checks, pack, sr.deadline, part=s.line_id)
                  for s, f in zip(specs, finds)]
     for d in decisions:
-        r.step("06_order", steps.place_order, d, rkey, req.approval_limit_inr, part=d.line_id)
+        r.step("06_order", steps.place_order, d, rkey, req.approval_limit_inr,
+               "bank_transfer" if pack.get("ordering") == "rfq" else "card", part=d.line_id)
     return r

@@ -5,6 +5,7 @@ python -m desk approve <order_key>    # approve a held order; the next run pays 
 python -m desk rfq [thread_id]        # RFQ threads, or one thread's emails
 python -m desk rfq reply <thread_id> "text"   # reply as the vendor (a teammate, in the hackathon)
 python -m desk pack approve <name>    # approve a pack the agent drafted for a new field
+python -m desk wallet [fund <inr> | limit <inr>]   # the agent's wallet: balance, limit, ledger, provider events
 """
 
 import argparse
@@ -13,7 +14,7 @@ import sys
 
 import pandas as pd
 
-from desk import draft_pack, orders, pipeline, rfq, view
+from desk import draft_pack, orders, payments, pipeline, rfq, view
 from desk.trace import load_run
 
 pd.set_option("display.width", 200)
@@ -116,6 +117,8 @@ def main() -> None:
     sub.add_parser("orders")
     ap = sub.add_parser("approve")
     ap.add_argument("order_key")
+    wl = sub.add_parser("wallet")
+    wl.add_argument("args", nargs="*", help="fund <inr> | limit <inr>")
     pk = sub.add_parser("pack")
     pk.add_argument("action", choices=["approve"])
     pk.add_argument("name")
@@ -138,8 +141,18 @@ def main() -> None:
         show(load_run(a.run_id))
     elif a.cmd == "orders":
         print(view.orders().to_string(index=False))
-        print("\nvendor checkout (mock) charges:")
+        print("\npayment provider: intents (one per order, however many runs):")
         print(pd.DataFrame(orders.checkout_payments()).to_string(index=False))
+    elif a.cmd == "wallet":
+        w = payments.AgentWallet()
+        if a.args[:1] == ["fund"]:
+            w.fund(float(a.args[1]))
+        elif a.args[:1] == ["limit"]:
+            w.set_limit(float(a.args[1]))
+        print(f"provider: {payments.provider().name} | balance ₹{w.balance:,.2f} | per-payment limit ₹{w.per_payment_limit:,.0f}\n")
+        print("ledger:"); print(pd.DataFrame(w.ledger()).to_string(index=False))
+        print("\nprovider events (webhooks):")
+        print(pd.DataFrame(payments.provider().events()).to_string(index=False))
     elif a.cmd == "pack":
         draft_pack.approve(a.name)
         print(f"pack {a.name} approved (still marked draft / low confidence). Re-run the request.")

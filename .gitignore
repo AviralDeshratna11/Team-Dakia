@@ -8,5 +8,5 @@ runs/
 # never commit cloud credentials
 gen-lang-client-*.json
 *service-account*.json
-checkout_mock.db
+payments_mock.db
 rfq.db
