@@ -64,3 +64,19 @@ def page_text(cache_key: str, chars: int = 3000, around: str | None = None) -> s
     if around and (i := text.find(around)) >= 0:
         return text[max(0, i - chars // 2): i + chars // 2]
     return text[:chars]
+
+
+def checks(cs: list) -> pd.DataFrame:
+    return pd.DataFrame([{"vendor": c.vendor, "seller": c.company_name, "seller_domain": c.seller_domain,
+                          "status": c.status, "score": c.score,
+                          **{s.name: ("✓ " if s.ok else "✗ " if s.ok is False else "? ") + (s.value or "")
+                             for s in c.signals}, "reason": c.reason} for c in cs])
+
+
+def orders(request_key: str | None = None) -> pd.DataFrame:
+    """Orders and their state; all requests unless request_key is given."""
+    from desk.orders import list_orders
+    return pd.DataFrame([{"key": o.idempotency_key, "line": o.line_id, "vendor": o.vendor, "mpn": o.mpn,
+                          "qty": o.qty, "amount_inr": o.amount_inr, "state": o.state, "held": o.held_reason,
+                          "payment": o.payment_id, "last_event": o.events[-1] if o.events else None}
+                         for o in list_orders(request_key)])

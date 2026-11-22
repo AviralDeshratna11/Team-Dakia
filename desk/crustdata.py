@@ -93,6 +93,26 @@ class Crustdata:
                                       ms=int((time.monotonic() - t0) * 1000)))
         return [out[u] for u in urls]
 
+    def identify(self, domain: str) -> list[dict]:
+        """Resolve a domain to companies. [] = no company record. 0.2 credits per match, misses free."""
+        body = {"domains": [domain], "fields": ["crustdata_company_id", "basic_info"]}
+        entry = self._cached_or_call(cache_key("identify", body), "/company/identify", body,
+                                     label=f"identify: {domain}")
+        resp = entry["response"]
+        return (resp[0].get("matches") or []) if isinstance(resp, list) and resp else []
+
+    def enrich(self, company_id: int, fields: list[str]) -> dict | None:
+        body = {"crustdata_company_ids": [company_id], "fields": fields}
+        entry = self._cached_or_call(cache_key("enrich", body), "/company/enrich", body,
+                                     label=f"enrich: {company_id} {fields}")
+        resp = entry["response"]
+        if isinstance(resp, list):
+            resp = resp[0] if resp else None
+        if isinstance(resp, dict) and "matches" in resp:      # same envelope as identify
+            m = resp.get("matches") or []
+            resp = m[0].get("company_data") if m else None
+        return resp
+
     def credits_left(self) -> dict:
         r = httpx.get(f"{BASE}/account/credits", headers=self._headers(), timeout=30)
         r.raise_for_status()

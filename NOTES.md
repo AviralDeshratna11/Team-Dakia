@@ -82,6 +82,18 @@ v0 runs the whole BOM end to end: steps 1–2 are real, 3, 4 and 6 are stubs, an
 
 ---
 
+## 2026-11-22 · Backbone complete: checks, landed cost, orders paid once (Sid)
+
+- **Step 1 is a gate.** If anything is unclear, nothing reaches step 2. All questions go to the founder at once, and round 2 re-reads the request with the answers. Round 2 may not ask again: anything still open gets the most common choice, listed in assumptions.
+- **Storefront domains don't always resolve to the seller.** `digikey.in` → "DigiKey Global Capability Center" (an Indian back office, founded 2021); `digikey.com` → DigiKey (founded 1972, ~2,700 staff). `mouser.in` → no record at all; `mouser.com` → Mouser (1964). The pack maps each storefront to its `company_domain`. Checks are per company, so two storefronts of one company become one record (hard case 3).
+- **Step 3 scores sellers in code:** real company (Identify), age, size and growth (Enrich headcount), web traffic, and authorized distributor (pack). Results: LCSC 0.78 (not authorized), DigiKey 1.00. A made-up storefront domain gets no match and is rejected (hard case 2).
+- **Crustdata data isn't always consistent:** LCSC shows headcount 27 but an employee range of 201–500.
+- **Step 5 follows the brief's rule table**, with landed cost = goods + shipping + duty + GST. All rates are PLACEHOLDERs in the pack, and every decision says so. With placeholder rates LCSC still beats DigiKey India on the LDO (₹8,258 vs ~₹9,300 landed).
+- **Step 6 never pays twice.** Order states are saved in `desk.db`. The idempotency key covers only what's bought, so re-runs find the same order. The mock checkout (`checkout_mock.db`) replays a repeated key instead of charging. Tested: crash after the vendor charged → re-run recovered the same payment ID; held order (₹2.05 lakh > ₹50k limit) → `approve` → next run paid it; a third run charged nothing. Three orders, three charges.
+- **Not yet:** step 4 (buy data) is a stub. Leads from open search aren't checked (no domain behind Google redirects). Shipping is charged per line, not consolidated per vendor.
+
+---
+
 ## Later (not now)
 
 - When data is missing or blocked, pay third-party data services for it.

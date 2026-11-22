@@ -1,13 +1,11 @@
 """The six steps. Each is a plain function: typed input in, typed output out.
 
-v0: steps 1-2 are real (step 1 lives in understand.py); 3, 4 and 6 are stubs; 5 is a placeholder
-rule (cheapest unflagged FOUND quote).
+Step 1 lives in understand.py, step 3 in check.py, step 6 in orders.py. Step 4 (buy data) is a stub.
 """
 
 from __future__ import annotations
 
-import hashlib
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote as urlquote
 
@@ -15,7 +13,9 @@ import yaml
 
 from desk import extract
 from desk.crustdata import Crustdata
-from desk.schemas import (STATUS_RANK, Check, Decision, FindResult, Lead, Order, PartCandidate, PriceTier,
+from desk.check import check_suppliers  # noqa: F401  (step 3)
+from desk.orders import place_order  # noqa: F401  (step 6)
+from desk.schemas import (STATUS_RANK, Check, Decision, FindResult, LandedCost, Lead, PartCandidate, PriceTier,
                           Quote, Spec, Status)
 from desk.understand import understand_specs  # noqa: F401  (step 1)
 
@@ -162,15 +162,7 @@ def _discover(spec: Spec, pack: dict, cd: Crustdata) -> list[Lead]:
     return leads[:cfg.get("max_leads", 8)]
 
 
-# ---------- step 3: check suppliers (STUB) ----------
-
-def check_suppliers(finds: list[FindResult]) -> list[Check]:
-    seen: dict[str, Check] = {}
-    for f in finds:
-        for q in f.quotes:
-            seen.setdefault(q.vendor_domain, Check(vendor=q.vendor, vendor_domain=q.vendor_domain,
-                                                   status="NOT_RUN", note="STUB: step 3 not built yet"))
-    return list(seen.values())
+# ---------- step 3: check suppliers: see check.py ----------
 
 
 # ---------- step 4: buy data (STUB) ----------
@@ -181,49 +173,101 @@ def buy_data(finds: list[FindResult], budget_inr: float) -> list[dict]:
     return [{**g, "action": "SKIPPED", "why": "STUB: step 4 not built yet"} for g in gaps]
 
 
-# ---------- step 5: decide (placeholder rule) ----------
+# ---------- step 5: decide ----------
 
-def decide(spec: Spec, find: FindResult, checks: list[Check]) -> Decision:
-    """Cheapest unflagged FOUND quote. Flagged quotes (e.g. possible clones) are never picked by code:
-    they go to the founder, but only when they'd change the result (cheaper, or the only option)."""
-    rule = "v0: cheapest unflagged FOUND quote by item cost (no landed cost, no reliability yet)"
-    considered = [{"vendor": q.vendor, "mpn": q.mpn, "maker": q.manufacturer, "status": q.status.value,
-                   "unit_price_inr": q.unit_price_inr, "buy_qty": q.buy_qty, "flags": q.flags,
-                   "note": q.note, "url": q.url} for q in find.quotes]
-    found = [q for q in find.quotes if q.status == Status.FOUND and q.unit_price_inr is not None]
+def decide(spec: Spec, find: FindResult, checks: list[Check], pack: dict,
+           deadline: date | None) -> Decision:
+    """Plain rules, in order (the brief's table):
+    1. seller doesn't resolve to a real company          -> reject
+    2. doesn't ship to India, or can't arrive by deadline -> reject
+    3. below the reliability bar                          -> reject, shown as "cheaper but untrusted"
+    4. check couldn't run, or quote is flagged (clone)    -> never picked silently: founder review
+    5. among the rest                                     -> lowest landed cost
+    """
+    rule = "real company > ships in time > reliability bar > unflagged > lowest landed cost"
+    by_domain = {c.vendor_domain: c for c in checks}
+    dists = {d["domain"]: d for d in pack["distributors"]}
+    min_score = pack["reliability"]["min_score"]
+    considered, rejected, ok, review = [], [], [], []
 
-    def total(q: Quote) -> float:
-        return round(q.unit_price_inr * q.buy_qty, 2)
+    for q in find.quotes:
+        if q.status != Status.FOUND or q.unit_price_inr is None:
+            considered.append(_row(q, None, None, f"not a usable quote: {q.status.value} {q.note}".strip()))
+            continue
+        c, d = by_domain.get(q.vendor_domain), dists.get(q.vendor_domain, {})
+        lc = landed_cost(q, spec.qty, d, pack)
+        row = _row(q, c, lc, "")
+        considered.append(row)
+        if c is None or c.status == "REJECTED":
+            rejected.append({**row, "rule": "not a real company", "why": c.reason if c else "not checked"})
+        elif not d.get("ships_to_india"):
+            rejected.append({**row, "rule": "doesn't ship to India", "why": f"{q.vendor} not marked ships_to_india"})
+        elif deadline and lc.arrives_by and lc.arrives_by > deadline:
+            rejected.append({**row, "rule": "misses the deadline", "why": f"arrives {lc.arrives_by}, need {deadline}"})
+        elif c.score is not None and c.score < min_score:
+            rejected.append({**row, "rule": "cheaper but untrusted", "why": f"score {c.score} < {min_score}: {c.reason}"})
+        elif c.status == "UNVERIFIED" or q.flags:
+            review.append({**row, "flags": q.flags + ([f"unverified seller: {c.reason}"] if c.status == "UNVERIFIED" else [])})
+        else:
+            ok.append((q, c, lc))
 
-    clean = [q for q in found if not q.flags]
-    best = min(clean, key=total) if clean else None
-    review = [{"vendor": q.vendor, "mpn": q.mpn, "maker": q.manufacturer, "flags": q.flags,
-               "unit_price_inr": q.unit_price_inr, "total_inr": total(q), "url": q.url,
-               "ask": (f"Cheaper than the pick by ₹{round(total(best) - total(q), 2)}, but flagged. Accept it?"
-                       if best else "The only option found, but flagged. Accept it?")}
-              for q in found if q.flags and (best is None or total(q) < total(best))]
+    best = min(ok, key=lambda t: t[2].total_inr) if ok else None
+    review = [{**r, "ask": (f"Cheaper than the pick by ₹{round(best[2].total_inr - r['landed_inr'], 2)}, but flagged. "
+                            "Accept it?" if best else "The only option left, but flagged. Accept it?")}
+              for r in review if best is None or r["landed_inr"] < best[2].total_inr]
+    substitutes = sorted({q.mpn for q in find.alternatives if q.mpn})
 
     if best is None:
         status = "NEEDS_FOUNDER" if review else "NONE"
-        reason = ("only flagged options found; waiting for the founder" if review
-                  else f"no vendor qualifies ({find.status.value}): {find.reason}")
-        return Decision(line_id=spec.line_id, status=status, rule=rule, picked=None, total_inr=None,
-                        reason=reason, founder_review=review, considered=considered)
+        if review:
+            reason = "only flagged options left; waiting for the founder"
+        else:
+            reason = f"no vendor qualifies ({find.status.value})"
+            if rejected:
+                reason += "; rejected: " + "; ".join(f"{r['vendor']}: {r['rule']}" for r in rejected)
+            if substitutes:
+                reason += f"; possible substitutes: {', '.join(substitutes)}"
+        return Decision(line_id=spec.line_id, status=status, rule=rule, picked=None, total_inr=None, reason=reason,
+                        founder_review=review, rejected=rejected, considered=considered,
+                        substitutes=substitutes if status == "NONE" else [])
 
-    reason = (f"{best.vendor}: {best.buy_qty} x ₹{best.unit_price_inr} = ₹{total(best)}; {best.manufacturer} "
-              f"{best.mpn}; stock {best.stock}; source {best.url} fetched {best.fetched_at:%Y-%m-%d %H:%M} UTC")
+    q, c, lc = best
+    reason = (f"{q.vendor}: {q.manufacturer} {q.mpn}, {q.buy_qty} x ₹{q.unit_price_inr} -> landed ₹{lc.total_inr:,.2f} "
+              f"(₹{lc.per_unit_inr}/unit, arrives by {lc.arrives_by}); seller {c.company_name}, score {c.score}; "
+              f"stock {q.stock}; source {q.url} fetched {q.fetched_at:%Y-%m-%d %H:%M} UTC")
+    if lc.placeholder_rates:
+        reason += "; shipping/duty/GST rates are placeholders"
+    if rejected:
+        reason += "; rejected: " + "; ".join(f"{r['vendor']} ({r['rule']})" for r in rejected)
     if review:
         reason += f"; {len(review)} cheaper flagged option(s) sent to the founder"
-    return Decision(line_id=spec.line_id, status="PICKED", rule=rule, picked=best, total_inr=total(best),
-                    reason=reason, founder_review=review, considered=considered)
+    return Decision(line_id=spec.line_id, status="PICKED", rule=rule, picked=q, landed=lc, total_inr=lc.total_inr,
+                    reason=reason, founder_review=review, rejected=rejected, considered=considered)
 
 
-# ---------- step 6: order (STUB) ----------
+def landed_cost(q: Quote, need_qty: int, dist: dict, pack: dict) -> LandedCost:
+    """goods + shipping + import duty (if shipped from abroad) + GST, all in INR."""
+    cfg = pack["landed_cost"]
+    goods = q.unit_price_inr * q.buy_qty
+    free_over = dist.get("free_shipping_over_inr")
+    shipping = 0.0 if free_over is not None and goods >= free_over else float(dist.get("shipping_inr") or 0)
+    imported = dist.get("ships_from") != cfg["destination_country"]
+    duty = cfg["import_duty_rate"] * (goods + shipping) if imported else 0.0
+    gst = cfg["gst_rate"] * (goods + shipping + duty)
+    total = goods + shipping + duty + gst
+    days = dist.get("transit_days")
+    return LandedCost(goods_inr=round(goods, 2), shipping_inr=round(shipping, 2), duty_inr=round(duty, 2),
+                      gst_inr=round(gst, 2), total_inr=round(total, 2), per_unit_inr=round(total / need_qty, 4),
+                      arrives_by=date.today() + timedelta(days=days) if days is not None else None,
+                      placeholder_rates=bool(cfg.get("placeholder_rates")))
 
-def place_order(decision: Decision, run_id: str) -> Order | None:
-    q = decision.picked
-    if decision.status != "PICKED" or q is None:
-        return None
-    key = hashlib.sha256(f"{run_id}:{decision.line_id}:{q.vendor_domain}".encode()).hexdigest()[:16]
-    return Order(line_id=decision.line_id, vendor=q.vendor, qty=q.buy_qty, amount_inr=decision.total_inr,
-                 state="PLANNED", idempotency_key=key)
+
+def _row(q: Quote, c: Check | None, lc: LandedCost | None, note: str) -> dict:
+    return {"vendor": q.vendor, "mpn": q.mpn, "maker": q.manufacturer, "status": q.status.value,
+            "unit_price_inr": q.unit_price_inr, "buy_qty": q.buy_qty,
+            "landed_inr": lc.total_inr if lc else None, "arrives_by": str(lc.arrives_by) if lc and lc.arrives_by else None,
+            "seller_score": c.score if c else None, "seller_status": c.status if c else None,
+            "flags": q.flags, "note": note or q.note, "url": q.url}
+
+
+# ---------- step 6: order: see orders.py ----------

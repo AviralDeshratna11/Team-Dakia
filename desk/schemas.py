@@ -28,6 +28,7 @@ class Request(BaseModel):
     deliver_to: str | None = None
     deadline: date | None = None
     data_budget_inr: float | None = None
+    approval_limit_inr: float = 50_000   # orders above this wait for the founder's approval
     lines: list[BomLine] = []
     answers: list[str] = []          # founder's answers to step 1's questions, e.g. "Q: ... A: ..."
 
@@ -134,34 +135,70 @@ class FindResult(BaseModel):
     leads: list[Lead]
 
 
-# ---------- step 3: check (stub) ----------
+# ---------- step 3: check ----------
+
+class Signal(BaseModel):
+    name: str                        # real_company, age, size, growth, web_traffic, authorized
+    value: str | None                # what we saw, e.g. "founded 1972"
+    ok: bool | None                  # None = couldn't check (unverified)
+    weight: float
+    source: str                      # where the value came from
+
 
 class Check(BaseModel):
     vendor: str
-    vendor_domain: str
-    status: str
-    note: str
+    vendor_domain: str               # the storefront we quoted from
+    seller_domain: str               # the company that actually sells (may differ, e.g. digikey.in -> digikey.com)
+    company_id: int | None
+    company_name: str | None
+    status: str                      # VERIFIED | REJECTED | UNVERIFIED
+    score: float | None              # weighted share of signals that passed, 0..1
+    signals: list[Signal]
+    reason: str
 
 
 # ---------- step 5: decide ----------
+
+class LandedCost(BaseModel):
+    goods_inr: float
+    shipping_inr: float
+    duty_inr: float
+    gst_inr: float
+    total_inr: float
+    per_unit_inr: float              # total / qty needed
+    arrives_by: date | None
+    placeholder_rates: bool          # True while pack rates are unverified placeholders
+
 
 class Decision(BaseModel):
     line_id: str
     status: str                      # PICKED | NEEDS_FOUNDER | NONE
     rule: str
     picked: Quote | None
+    landed: LandedCost | None = None
     total_inr: float | None
     reason: str
     founder_review: list[dict] = []  # flagged options the founder should see (e.g. cheaper possible clone)
+    rejected: list[dict] = []        # vendors ruled out, with the rule that ruled them out
     considered: list[dict]
+    substitutes: list[str] = []      # near-miss part numbers seen, when nothing qualifies
 
 
-# ---------- step 6: order (stub) ----------
+# ---------- step 6: order ----------
+
+ORDER_STATES = ["PLANNED", "APPROVED", "PAY_PENDING", "PAID"]
+
 
 class Order(BaseModel):
+    idempotency_key: str             # same request + line + vendor + part + qty -> same key, across runs
+    request_key: str
     line_id: str
     vendor: str
+    vendor_domain: str
+    mpn: str
     qty: int
     amount_inr: float
     state: str                       # PLANNED -> APPROVED -> PAY_PENDING -> PAID
-    idempotency_key: str
+    held_reason: str | None = None   # why it's waiting (e.g. above the approval limit)
+    payment_id: str | None = None
+    events: list[str] = []           # state history, oldest first

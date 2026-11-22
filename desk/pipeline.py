@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Callable
 
@@ -18,6 +19,11 @@ Ask = Callable[[Question], str]
 
 def load_request(path: str | Path) -> Request:
     return Request(**yaml.safe_load(Path(path).read_text()))
+
+
+def request_key(req: Request) -> str:
+    """Stable id for 'this request', so re-runs find the same orders (never pay twice)."""
+    return hashlib.sha256(req.model_dump_json(exclude={"approval_limit_inr"}).encode()).hexdigest()[:16]
 
 
 def clarify_specs(r: Run, req: Request, packs: dict, ask: Ask | None) -> SpecResult | None:
@@ -56,11 +62,12 @@ def run(request_path: str | Path, use_cache: bool = True, ask: Ask | None = None
     sr = clarify_specs(r, req, packs, ask)
     if sr is None or sr.units is None:
         return r
-    pack, specs = packs[sr.category], sr.specs
+    pack, specs, rkey = packs[sr.category], sr.specs, request_key(req)
     finds = [r.step("02_find", steps.find_suppliers, s, pack, cd, part=s.line_id) for s in specs]
-    checks = r.step("03_check", steps.check_suppliers, finds)
+    checks = r.step("03_check", steps.check_suppliers, finds, pack, cd)
     r.step("04_buy_data", steps.buy_data, finds, sr.data_budget_inr or 0)
-    decisions = [r.step("05_decide", steps.decide, s, f, checks, part=s.line_id) for s, f in zip(specs, finds)]
+    decisions = [r.step("05_decide", steps.decide, s, f, checks, pack, sr.deadline, part=s.line_id)
+                 for s, f in zip(specs, finds)]
     for d in decisions:
-        r.step("06_order", steps.place_order, d, r.id, part=d.line_id)
+        r.step("06_order", steps.place_order, d, rkey, req.approval_limit_inr, part=d.line_id)
     return r
