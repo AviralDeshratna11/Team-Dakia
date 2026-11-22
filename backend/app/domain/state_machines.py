@@ -21,7 +21,7 @@ def transition(run, target, message):
     run.events.append(WorkflowEvent(state=target, message=message))
 
 
-ORDER_TRANSITIONS = {"PLANNED": {"APPROVED"}, "APPROVED": {"PAY_PENDING"}, "PAY_PENDING": {"PAID", "RECONCILING", "FAILED"}, "RECONCILING": {"PAID", "FAILED"}, "PAID": set(), "FAILED": set()}
+ORDER_TRANSITIONS = {"PLANNED": {"APPROVED"}, "APPROVED": {"PAY_PENDING"}, "PAY_PENDING": {"APPROVED", "PAID", "RECONCILING", "FAILED"}, "RECONCILING": {"APPROVED", "PAID", "FAILED"}, "PAID": set(), "FAILED": set()}
 
 
 def order_transition(order, target):

@@ -118,10 +118,13 @@ class LLMExtractionService:
         return specs, question
 
     def extract(self, run):
-        by_id = {e.id:e for e in run.evidence if e.provider != "gemini_extraction"}
+        by_id = {e.id:e for e in run.evidence if e.provider not in {"gemini_extraction", "reviewed_supplier_quote"}}
+        provider_quotes = [quote for quote in run.quotes if not quote.reviewed_terms]
+        if not provider_quotes:
+            return
         data = {"specs":[s.model_dump(mode="json") for s in run.specs],
                 "suppliers":[s.model_dump(mode="json") for s in run.suppliers],
-                "quotes":[{"supplier_id":q.supplier_id,"spec_id":q.spec_id,"evidence_ids":q.evidence_ids} for q in run.quotes],
+                "quotes":[{"supplier_id":q.supplier_id,"spec_id":q.spec_id,"evidence_ids":q.evidence_ids} for q in provider_quotes],
                 "evidence":[{"id":e.id,"provider":e.provider,"reference":e.reference,"content":source_text(e)[:6000]} for e in by_id.values()]}
         extraction = self.client.generate(run.id,"extract_provider_evidence",EVIDENCE_PROMPT,data,SupplierExtraction)
         suppliers = {s.id:s for s in run.suppliers}
@@ -129,7 +132,7 @@ class LLMExtractionService:
         warnings = []
         for insight in extraction.insights:
             supplier = suppliers.get(insight.supplier_id)
-            scoped = {eid for q in run.quotes if q.supplier_id == insight.supplier_id for eid in q.evidence_ids}
+            scoped = {eid for q in provider_quotes if q.supplier_id == insight.supplier_id for eid in q.evidence_ids}
             if supplier is None or not insight.evidence_ids or not set(insight.evidence_ids) <= scoped:
                 warnings.append("Discarded insight with unknown supplier or out-of-scope evidence")
                 continue
@@ -140,7 +143,7 @@ class LLMExtractionService:
                     warnings.append(f"Discarded conflicting {fact.field} claims for {insight.supplier_id}")
                     continue
                 source = by_id.get(fact.evidence_id)
-                quotes = [q for q in run.quotes if q.supplier_id == supplier.id and (fact.spec_id is None or q.spec_id == fact.spec_id)]
+                quotes = [q for q in provider_quotes if q.supplier_id == supplier.id and (fact.spec_id is None or q.spec_id == fact.spec_id)]
                 if source is None or fact.evidence_id not in scoped or fact.excerpt not in source_text(source)[:6000] or not quotes:
                     warnings.append(f"Discarded unsupported {fact.field} claim for {supplier.id}")
                     continue

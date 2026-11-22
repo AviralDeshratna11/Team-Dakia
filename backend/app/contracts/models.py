@@ -90,6 +90,9 @@ class Evidence(Contract):
     status: Literal["verified", "unverified"] = "verified"
 
 
+SupplierKind = Literal["manufacturer", "distributor", "retailer", "service_provider", "trader", "unknown"]
+
+
 class Supplier(Contract):
     id: str
     canonical_id: str | None
@@ -97,7 +100,7 @@ class Supplier(Contract):
     aliases: list[str] = Field(default_factory=list)
     domain: str
     locations: list[str]
-    kind: Literal["manufacturer", "distributor", "retailer", "service_provider", "trader", "unknown"]
+    kind: SupplierKind
     identity: Literal["resolved", "unverified"]
 
 
@@ -107,6 +110,36 @@ class SupplierCheck(Contract):
     result: Literal["pass", "fail", "unverified", "not_applicable"]
     reason: str
     evidence_ids: list[str]
+
+
+class ReviewedQuoteTerms(Contract):
+    request_fingerprint: str
+    total_minor: int = Field(gt=0, le=100_000_000_000, strict=True)
+    destination: str
+    reviewer: str
+    supplier_kind: SupplierKind
+    identity_reference: str
+
+
+class SupplierQuoteSubmission(Contract):
+    spec_id: str
+    supplier_name: str = Field(min_length=2, max_length=160)
+    supplier_domain: str = Field(max_length=253, pattern=r"^(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}$")
+    supplier_kind: SupplierKind
+    identity_reference: str = Field(min_length=5, max_length=1000)
+    quote_reference: str = Field(min_length=3, max_length=1000)
+    quote_excerpt: str = Field(min_length=10, max_length=8000)
+    reviewer: str = Field(min_length=2, max_length=100)
+    quantity: int = Field(gt=0, strict=True)
+    unit: str = Field(min_length=1, max_length=100)
+    destination: str = Field(min_length=2, max_length=300)
+    delivery_at: datetime
+    expires_at: datetime
+    total_minor: int = Field(gt=0, le=100_000_000_000, strict=True)
+    includes_all_costs: Literal[True]
+    requirements_and_availability_confirmed: Literal[True]
+    authorized_distributor: bool = False
+    manufacturer_verified: bool = False
 
 
 class Quote(Contract):
@@ -130,14 +163,15 @@ class Quote(Contract):
     evidence_ids: list[str] = Field(default_factory=list)
     status: Literal["verified", "unverified"] = "verified"
     signals: dict[str, bool | None] = Field(default_factory=dict)
+    reviewed_terms: ReviewedQuoteTerms | None = None
 
 
 class Cost(Contract):
     currency: str = "INR"
-    goods_minor: int
-    shipping_minor: int
-    duty_minor: int
-    tax_minor: int
+    goods_minor: int | None
+    shipping_minor: int | None
+    duty_minor: int | None
+    tax_minor: int | None
     total_minor: int
     unit_minor: str
     assumptions: str = "Demo rates; one shipment per quote, no cross-item consolidation"
@@ -246,7 +280,7 @@ class HumanReviewTask(Contract):
     created_at: datetime = Field(default_factory=now)
     resolved_at: datetime | None = None
     reviewer: str | None = None
-    resolution: Literal["retry", "manual_completion", "cancel"] | None = None
+    resolution: Literal["retry", "evaluate_quotes", "manual_completion", "cancel"] | None = None
     note: str | None = None
     reference: str | None = None
     resolution_fingerprint: str | None = None
@@ -254,7 +288,7 @@ class HumanReviewTask(Contract):
 
 class HumanReviewResolution(Contract):
     reviewer: str = Field(min_length=2, max_length=100)
-    action: Literal["retry", "manual_completion", "cancel"]
+    action: Literal["retry", "evaluate_quotes", "manual_completion", "cancel"]
     note: str = Field(min_length=5, max_length=4000)
     reference: str | None = Field(default=None, max_length=1000)
     specs: list[Spec] | None = None

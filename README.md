@@ -1,10 +1,22 @@
 # Sourcing Desk
 
+## Test supplier payments
+
+Start the dashboard, API and worker as described below. To exercise checkout without paid provider calls, choose offline fixtures and turn Gemini off. Enter `electronics` as product context and submit the following request.
+
+> Source 500 ESP32-S3 modules, 500 of each, delivered to Bengaluru within three weeks.
+
+Set **Approval required above** to `0` to test the approval step. In **Orders & RFQs**, approve the order, then check the synthetic receipt and wallet debit. The local wallet starts with ₹10,00,000 in synthetic funds, less any existing simulated settlements. You can add test funds from the same tab. If checkout pauses for insufficient funds, add test funds and use **Revise and retry** on the pending review without altering the order.
+
+**Preview RazorpayX UPI payout** displays the outgoing payout request for the order, including its paise amount, supplier reference, stable idempotency key and placeholder account IDs. The preview uses the [RazorpayX payout-to-VPA contract](https://razorpay.com/docs/api/x/payouts/create/vpa). The current provider is the local synthetic wallet. A live adapter would need a verified supplier-to-fund-account mapping, buyer account authorization, payment approval and reconciliation with RazorpayX status before marking an order paid. The preview makes no provider calls and requires no payment credentials.
+
 ## General sourcing and human assistance
 
 The main form now accepts any product or service, with optional free-text context instead of fixed category choices. Choose **Purchase plan** or **Supplier shortlist and RFQ drafts** independently. There is no preselected electronics supplier. Existing fixture catalogues remain limited offline examples.
 
-When verified sourcing cannot finish, a durable task appears in the **Human review inbox** and the run pauses in `WAITING_FOR_HUMAN`. A reviewer can revise and retry, record manual handling with a reference, or cancel. The same budgets, caches and payment identities are retained. Human-reported outcomes are separate from automated purchases; real payments and outside notifications are not implemented. See [the general sourcing and human-review workflow](docs/general-and-human-review.md).
+When verified sourcing cannot finish, a durable task appears in the **Human review inbox** and the run pauses in `WAITING_FOR_HUMAN`. A reviewer can revise and retry, record manual handling with a reference, or cancel. See [the general sourcing and human-review workflow](docs/general-and-human-review.md).
+
+To continue with a supplier-issued quote, open the pending review and use **Add supplier quote**. Choose a requested item, enter evidence for the supplier and the quote, and confirm the quoted specifications, availability, delivery and all-in INR total. Choose **Evaluate supplier quotes** to reuse the saved terms without another Crustdata or Gemini call. Check eligibility and any approval in **Orders & RFQs**, then view the synthetic receipt and payout preview.
 
 A local procurement-agent skeleton for founders who currently compare suppliers, verify companies and calculate landed costs themselves. It turns a reference electronics BOM into an auditable plan and simulated orders, or a leather-goods request into a manufacturer shortlist and unsent RFQ drafts.
 

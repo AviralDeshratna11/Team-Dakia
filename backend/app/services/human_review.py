@@ -34,6 +34,8 @@ def resolve_review(run, task_id, resolution: HumanReviewResolution):
         raise ValueError("reconcile pending checkout with an unchanged retry before cancelling, revising or recording manual completion")
     if resolution.action == "manual_completion" and not resolution.reference:
         raise ValueError("manual handling requires a receipt, order, RFQ or other completion reference")
+    if resolution.action == "evaluate_quotes" and not any(quote.reviewed_terms for quote in run.quotes):
+        raise ValueError("Add a reviewed supplier quote before evaluating quotes")
     if (any(o.state == "PAID" for o in run.orders) or run.human_completed_spec_ids) and any(key in revisions for key in ["specs","text","destination","deadline"]):
         raise ValueError("paid or manually handled items cannot be rewritten; create a separate request for materially changed requirements")
     updated_request = None
@@ -56,6 +58,9 @@ def resolve_review(run, task_id, resolution: HumanReviewResolution):
             transition(run,S.COMPLETED,"Request handled manually by reviewer; no automated payment was created.")
         else:
             transition(run,S.DECIDING,"Manual handling recorded for blocked items; recomputing remaining automated work.")
+    elif resolution.action == "evaluate_quotes":
+        run.plan_version = None
+        transition(run, S.DECIDING, "Re-evaluating saved supplier quotes against the current request.")
     else:
         if updated_request: run.request = updated_request
         target = S.EXECUTING if pending_payment else task.resume_state

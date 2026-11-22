@@ -13,6 +13,7 @@ from app.providers.crustdata import CrustdataClient
 from app.providers.live_discovery import LiveDiscovery
 from app.providers.interfaces import IntegrationUnavailable
 from app.providers.mock_checkout import MockPayments
+from app.providers.payments import InsufficientFunds, PaymentProvider
 from app.services.specification_parser import FixtureParser
 from app.providers.gemini import GeminiClient, GeminiOutputError
 from app.services.llm_extraction import LLMExtractionService
@@ -23,7 +24,7 @@ ACTIVE = {S.CREATED, S.PARSING, S.DISCOVERING, S.VERIFYING, S.RESEARCHING, S.DEC
 
 def fingerprint(run):
     payload = {"specs": [s.model_dump(mode="json") for s in run.specs],
-               "quotes": [q.model_dump(mode="json") for q in run.quotes],
+               "quotes": [q.model_dump(mode="json", exclude={"reviewed_terms"} if q.reviewed_terms is None else set()) for q in run.quotes],
                "suppliers": [s.model_dump(mode="json") for s in run.suppliers],
                "pack": pack_for(run.request.category).model_dump(mode="json"),
                "destination": run.request.destination, "deadline": run.request.deadline.isoformat(),
@@ -32,7 +33,7 @@ def fingerprint(run):
 
 
 class Orchestrator:
-    def __init__(self, database, payments=None, live_client=None, llm_client=None):
+    def __init__(self, database, payments: PaymentProvider | None = None, live_client=None, llm_client=None):
         self.db = database
         self.payments = payments or MockPayments(database.path + ".payments.db")
         self.live_client = live_client
@@ -107,7 +108,15 @@ class Orchestrator:
             if run.request.mode == "fixture" and run.request.scenario == "provider_timeout" and attempts < 3:
                 run.events.append(WorkflowEvent(state=run.state, message=f"Simulated provider timeout / 429 attempt {attempts}/3; retry on next worker poll."))
                 return
+            saved_quotes = [quote for quote in run.quotes if quote.reviewed_terms]
+            saved_supplier_ids = {quote.supplier_id for quote in saved_quotes}
+            saved_evidence = [evidence for evidence in run.evidence if evidence.provider == "reviewed_supplier_quote"]
+            saved_suppliers = [supplier for supplier in run.suppliers if supplier.id in saved_supplier_ids]
             run.suppliers, run.quotes, run.evidence = provider.discover(run.request, run.specs)
+            discovered_ids = {supplier.id for supplier in run.suppliers}
+            run.suppliers.extend(supplier for supplier in saved_suppliers if supplier.id not in discovered_ids)
+            run.quotes.extend(saved_quotes)
+            run.evidence.extend(saved_evidence)
             transition(run, S.VERIFYING, "Canonical company IDs merged; source timestamps saved." + (" Provider retries exhausted; quote facts remain unverified." if attempts == 3 else ""))
         elif run.state == S.VERIFYING:
             if run.request.llm_enabled:
@@ -150,10 +159,11 @@ class Orchestrator:
                 if order.state in {"PAY_PENDING", "RECONCILING"}:
                     previous = self.payments.lookup(order.idempotency_key)
                     if previous:
+                        self.check_order_receipt(order, previous)
                         order.payment_id = previous["payment_id"]
                         order_transition(order, "PAID")
                         record_spend(c, run.id, "orders", order.amount_minor, "Simulated supplier order (reconciled)", order.idempotency_key)
-            if run.plan_version != fingerprint(run) or any(q.expires_at <= now() for q in run.quotes if any(o.quote_id == q.id and o.state != "PAID" for o in run.orders)):
+            if run.plan_version != fingerprint(run) or any(not order_quote_current(run, order) for order in run.orders if order.state != "PAID"):
                 transition(run, S.DECIDING, "Plan changed or evidence expired; old approvals cannot authorize a new plan.")
                 return
             pending = next((o for o in run.orders if o.state != "PAID"), None)
@@ -162,6 +172,8 @@ class Orchestrator:
                 return
             if run.request.request_type == "shortlist" or pack.ordering_method == "rfq":
                 for decision in run.decisions:
+                    if run.request.request_type == "purchase" and any(order.spec_id == decision.spec_id for order in run.orders):
+                        continue
                     for supplier_id in decision.selected_supplier_ids:
                         draft_id = f"{run.id}:{decision.spec_id}:{supplier_id}"
                         if not any(d.id == draft_id for d in run.rfqs):
@@ -211,7 +223,13 @@ class Orchestrator:
                     purchase.rationale += " Budget lowered before payment; reservation released."
                     return True
                 # Reconcile any previous provider commit before attempting another payment.
-                self.payments.pay(purchase.id, purchase.quoted_minor, "research")
+                try:
+                    self.payments.pay(purchase.id, purchase.quoted_minor, "research")
+                except InsufficientFunds:
+                    c.exec_driver_sql("UPDATE reservations SET status='released' WHERE id=?", (purchase.id,))
+                    purchase.status = "released"
+                    purchase.rationale += " The synthetic wallet had insufficient funds."
+                    return True
                 c.exec_driver_sql("UPDATE reservations SET status='settled' WHERE id=?", (purchase.id,))
                 record_spend(c, run.id, "research", purchase.quoted_minor, purchase.question, purchase.id)
                 fact = Evidence(reference=f"mock-paid-data://{purchase.id}", provider="mock_paid_data", fact="stock", value="10000 units available in synthetic scenario")
@@ -239,6 +257,9 @@ class Orchestrator:
                 if not decision.selected_quote_id or any(o.spec_id == decision.spec_id for o in paid):
                     continue
                 candidate = next(c for c in decision.candidates if c.quote_id == decision.selected_quote_id)
+                quote = next(q for q in run.quotes if q.id == candidate.quote_id)
+                if pack.ordering_method != "checkout" and not quote.reviewed_terms:
+                    continue
                 oid = f"{run.id}:{decision.spec_id}:{candidate.supplier_id}:{run.plan_version}"
                 order = Order(id=oid, spec_id=decision.spec_id, supplier_id=candidate.supplier_id, quote_id=candidate.quote_id,
                     plan_version=run.plan_version, amount_minor=candidate.cost.total_minor,
@@ -258,14 +279,38 @@ class Orchestrator:
             raise ValueError("order is not authorized")
         existing = self.payments.lookup(order.idempotency_key)
         try:
-            result = existing or self.payments.pay(order.idempotency_key, order.amount_minor, "orders", run.request.scenario)
+            result = existing or self.payments.pay(order.idempotency_key, order.amount_minor, "orders", run.request.scenario,
+                                                   payee_ref=order.supplier_id)
+        except InsufficientFunds as exc:
+            # A definitive decline can be retried after funding with the same approved intent.
+            order_transition(order, "APPROVED")
+            run.error = str(exc)
+            if run.request.human_review_enabled:
+                open_review(run, "PAYMENT_INSUFFICIENT_FUNDS", "Add synthetic funds to the wallet, then retry this order.",
+                            [run.error], [order.spec_id], S.EXECUTING)
+            else:
+                transition(run,S.FAILED,run.error)
+            return
         except TimeoutError:
             order_transition(order, "RECONCILING")
             run.events.append(WorkflowEvent(state=run.state, message="Mock checkout timed out after committing; will reconcile by idempotency key."))
             return
+        self.check_order_receipt(order, result)
         order.payment_id = result["payment_id"]
         order_transition(order, "PAID")
         record_spend(c, run.id, "orders", order.amount_minor, "Simulated supplier order", order.idempotency_key)
+
+    @staticmethod
+    def check_order_receipt(order, receipt):
+        if (receipt["key"] != order.idempotency_key or receipt["amount"] != order.amount_minor
+                or receipt["account"] != "orders" or receipt.get("payee_ref") not in (None, order.supplier_id)):
+            raise ValueError("Checkout receipt does not match the approved order")
+
+
+def order_quote_current(run, order):
+    at = now()
+    quote = next((q for q in run.quotes if q.id == order.quote_id), None)
+    return bool(quote and quote.expires_at > at and (not quote.reviewed_terms or (quote.delivery_at and quote.delivery_at > at)))
 
 
 def approve(run, approval: Approval):
@@ -276,7 +321,7 @@ def approve(run, approval: Approval):
     order = next((o for o in run.orders if o.id == approval.order_id), None)
     if order is None or order.amount_minor != approval.amount_minor or order.plan_version != approval.plan_version:
         raise ValueError("approval does not match exact order version and amount")
-    if any(q.expires_at <= now() for q in run.quotes if q.id == order.quote_id):
+    if not order_quote_current(run, order):
         raise ValueError("quote expired; replan required")
     if order.state == "PLANNED": order_transition(order, "APPROVED")
     run.events.append(WorkflowEvent(state=run.state, message=f"Recorded approval for exact order {order.id}: {order.amount_minor} paise."))

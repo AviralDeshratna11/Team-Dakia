@@ -135,6 +135,90 @@ def test_provider_failure_routes_to_human_instead_of_silently_finishing(system):
     assert 'CREDIT_LIMIT' in task['blockers'][0]
 
 
+def test_reviewed_supplier_quote_completes_live_mode_with_synthetic_payment(system):
+    db, _, api = system
+
+    class UnavailableProvider:
+        calls = 0
+
+        def set_run_limit(self, *_):
+            pass
+
+        def search(self, *_):
+            self.calls += 1
+            raise IntegrationUnavailable('CRUSTDATA_CREDIT_LIMIT: paid call blocked')
+
+        def usage(self, *_):
+            return []
+
+    provider = UnavailableProvider()
+    worker = Orchestrator(db, live_client=provider)
+    started = api.post('/api/runs', json=payload(
+        mode='live', category='packaging', llm_enabled=False, approval_threshold_minor=0,
+    ))
+    assert started.status_code == 201
+    rid = started.json()['id']
+    paused = drive(api, worker, rid)
+    assert paused['state'] == 'WAITING_FOR_HUMAN'
+    path = f'/api/runs/{rid}/human-reviews/{paused["human_reviews"][0]["id"]}'
+    balance_before = api.get('/api/payments/wallet').json()['available_minor']
+    submission = {
+        'spec_id': 'bags',
+        'supplier_name': 'Test Packaging',
+        'supplier_domain': 'bags.example',
+        'supplier_kind': 'manufacturer',
+        'identity_reference': 'Test company registration 42',
+        'quote_reference': 'TEST-QUOTE-42',
+        'quote_excerpt': '100 cotton tote bags, 38 x 42 cm, delivered for INR 8000 including tax and shipping.',
+        'reviewer': 'Test reviewer',
+        'quantity': 100,
+        'unit': paused['specs'][0]['unit'],
+        'destination': paused['request']['destination'],
+        'delivery_at': (now() + timedelta(days=10)).isoformat(),
+        'expires_at': (now() + timedelta(days=2)).isoformat(),
+        'total_minor': 800_000,
+        'includes_all_costs': True,
+        'requirements_and_availability_confirmed': True,
+    }
+    for revision in [
+        {'quantity': 99},
+        {'destination': 'Wrong location'},
+        {'expires_at': (now() - timedelta(days=1)).isoformat()},
+        {'delivery_at': (now() + timedelta(days=30)).isoformat()},
+    ]:
+        assert api.post(path + '/supplier-quotes', json={**submission, **revision}).status_code == 409
+    assert api.post(path + '/supplier-quotes', json={**submission, 'includes_all_costs': False}).status_code == 422
+
+    saved = api.post(path + '/supplier-quotes', json=submission)
+    assert saved.status_code == 201, saved.text
+    _, identity = saved.json()['evidence'][-2:]
+    assert identity['reference'] == submission['identity_reference']
+    result = api.post(path + '/resolve', json={
+        'reviewer': 'Test reviewer', 'action': 'evaluate_quotes',
+        'note': 'Checked the sample supplier quote against the request.',
+    })
+    assert result.status_code == 200, result.text
+    planned = drive(api, worker, rid)
+    assert planned['state'] == 'WAITING_FOR_APPROVAL', planned['decisions']
+    order, = planned['orders']
+    assert order['amount_minor'] == submission['total_minor']
+    assert api.get('/api/payments/wallet').json()['available_minor'] == balance_before
+    approval = {'order_id': order['id'], 'plan_version': order['plan_version'], 'amount_minor': order['amount_minor']}
+    approval_path = f'/api/runs/{rid}/approvals'
+    assert api.post(approval_path, json={**approval, 'amount_minor': 1}).status_code == 409
+    assert api.post(approval_path, json=approval).status_code == 200
+
+    finished = drive(api, worker, rid)
+    assert finished['state'] == 'COMPLETED'
+    paid, = finished['orders']
+    assert paid['state'] == 'PAID' and paid['payment_id'].startswith('sim_')
+    worker.tick(rid)
+    assert provider.calls == 1 and worker.payments.count() == 1
+    assert api.get('/api/payments/wallet').json()['available_minor'] == balance_before - order['amount_minor']
+    preview = api.get(f'/api/runs/{rid}/orders/{order["id"]}/payout-preview').json()
+    assert preview['body']['mode'] == 'UPI' and preview['body']['amount'] == order['amount_minor']
+
+
 def test_user_can_request_a_human_during_clarification(system):
     db,worker,api=system
     rid=api.post('/api/runs',json=payload(text='Find suitable office furniture',specs=[])).json()['id']

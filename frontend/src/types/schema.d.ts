@@ -38,6 +38,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/payments/wallet": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Wallet Balance */
+        get: operations["wallet_balance_api_payments_wallet_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/payments/wallet/fund": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Fund Wallet */
+        post: operations["fund_wallet_api_payments_wallet_fund_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runs/{run_id}/orders/{order_id}/payout-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Payout Preview */
+        get: operations["payout_preview_api_runs__run_id__orders__order_id__payout_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/runs/{run_id}/human-review": {
         parameters: {
             query?: never;
@@ -66,6 +117,23 @@ export interface paths {
         put?: never;
         /** Resolve Human Review */
         post: operations["resolve_human_review_api_runs__run_id__human_reviews__task_id__resolve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runs/{run_id}/human-reviews/{task_id}/supplier-quotes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit Supplier Quote */
+        post: operations["submit_supplier_quote_api_runs__run_id__human_reviews__task_id__supplier_quotes_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -353,13 +421,13 @@ export interface components {
              */
             currency: string;
             /** Goods Minor */
-            goods_minor: number;
+            goods_minor: number | null;
             /** Shipping Minor */
-            shipping_minor: number;
+            shipping_minor: number | null;
             /** Duty Minor */
-            duty_minor: number;
+            duty_minor: number | null;
             /** Tax Minor */
-            tax_minor: number;
+            tax_minor: number | null;
             /** Total Minor */
             total_minor: number;
             /** Unit Minor */
@@ -442,7 +510,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "retry" | "manual_completion" | "cancel";
+            action: "retry" | "evaluate_quotes" | "manual_completion" | "cancel";
             /** Note */
             note: string;
             /** Reference */
@@ -491,7 +559,7 @@ export interface components {
             /** Reviewer */
             reviewer: string | null;
             /** Resolution */
-            resolution: ("retry" | "manual_completion" | "cancel") | null;
+            resolution: ("retry" | "evaluate_quotes" | "manual_completion" | "cancel") | null;
             /** Note */
             note: string | null;
             /** Reference */
@@ -614,6 +682,7 @@ export interface components {
             signals: {
                 [key: string]: boolean | null;
             };
+            reviewed_terms: components["schemas"]["ReviewedQuoteTerms"] | null;
         };
         /** RFQDraft */
         RFQDraft: {
@@ -658,6 +727,24 @@ export interface components {
             evidence_ids: string[];
             /** Changed Decision */
             changed_decision: boolean | null;
+        };
+        /** ReviewedQuoteTerms */
+        ReviewedQuoteTerms: {
+            /** Request Fingerprint */
+            request_fingerprint: string;
+            /** Total Minor */
+            total_minor: number;
+            /** Destination */
+            destination: string;
+            /** Reviewer */
+            reviewer: string;
+            /**
+             * Supplier Kind
+             * @enum {string}
+             */
+            supplier_kind: "manufacturer" | "distributor" | "retailer" | "service_provider" | "trader" | "unknown";
+            /** Identity Reference */
+            identity_reference: string;
         };
         /**
          * RunState
@@ -919,6 +1006,66 @@ export interface components {
             /** Evidence Ids */
             evidence_ids: string[];
         };
+        /** SupplierQuoteSubmission */
+        SupplierQuoteSubmission: {
+            /** Spec Id */
+            spec_id: string;
+            /** Supplier Name */
+            supplier_name: string;
+            /** Supplier Domain */
+            supplier_domain: string;
+            /**
+             * Supplier Kind
+             * @enum {string}
+             */
+            supplier_kind: "manufacturer" | "distributor" | "retailer" | "service_provider" | "trader" | "unknown";
+            /** Identity Reference */
+            identity_reference: string;
+            /** Quote Reference */
+            quote_reference: string;
+            /** Quote Excerpt */
+            quote_excerpt: string;
+            /** Reviewer */
+            reviewer: string;
+            /** Quantity */
+            quantity: number;
+            /** Unit */
+            unit: string;
+            /** Destination */
+            destination: string;
+            /**
+             * Delivery At
+             * Format: date-time
+             */
+            delivery_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Total Minor */
+            total_minor: number;
+            /**
+             * Includes All Costs
+             * @constant
+             */
+            includes_all_costs: true;
+            /**
+             * Requirements And Availability Confirmed
+             * @constant
+             */
+            requirements_and_availability_confirmed: true;
+            /**
+             * Authorized Distributor
+             * @default false
+             */
+            authorized_distributor: boolean;
+            /**
+             * Manufacturer Verified
+             * @default false
+             */
+            manufacturer_verified: boolean;
+        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -927,6 +1074,32 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /** WalletBalance */
+        WalletBalance: {
+            /**
+             * Mode
+             * @constant
+             */
+            mode: "synthetic";
+            /**
+             * Currency
+             * @constant
+             */
+            currency: "INR";
+            /** Available Minor */
+            available_minor: number;
+            /** Funded Minor */
+            funded_minor: number;
+            /** Spent Minor */
+            spent_minor: number;
+        };
+        /** WalletFunding */
+        WalletFunding: {
+            /** Amount Minor */
+            amount_minor: number;
+            /** Idempotency Key */
+            idempotency_key: string;
         };
         /** WorkflowEvent */
         WorkflowEvent: {
@@ -1054,6 +1227,91 @@ export interface operations {
             };
         };
     };
+    wallet_balance_api_payments_wallet_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WalletBalance"];
+                };
+            };
+        };
+    };
+    fund_wallet_api_payments_wallet_fund_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WalletFunding"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WalletBalance"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    payout_preview_api_runs__run_id__orders__order_id__payout_preview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+                order_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     request_review_api_runs__run_id__human_review_post: {
         parameters: {
             query?: never;
@@ -1107,6 +1365,42 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowRun"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_supplier_quote_api_runs__run_id__human_reviews__task_id__supplier_quotes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SupplierQuoteSubmission"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };

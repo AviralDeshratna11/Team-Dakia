@@ -5,14 +5,19 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import Field
+from typing import Literal
 from app.contracts import (Contract, SourcingRequest, WorkflowRun, WorkflowEvent, RunState as S,
-                           Spec, Approval, LedgerEntry, BudgetReservation, Decision, Order, RFQDraft, Clarification, HumanReviewTask, HumanReviewResolution, now)
+                           Spec, Approval, LedgerEntry, BudgetReservation, Decision, Order, RFQDraft, Clarification,
+                           HumanReviewTask, HumanReviewResolution, SupplierQuoteSubmission)
 from app.domain.state_machines import transition
 from app.persistence.database import Database
 from app.persistence.repositories import get_run, save_run, list_runs, ledger
-from app.workflow.orchestrator import approve, fingerprint
+from app.workflow.orchestrator import approve, fingerprint, order_quote_current
 from app.services.llm_extraction import LLMExtractionService
 from app.services.human_review import open_review, resolve_review
+from app.services.supplier_quotes import add_supplier_quote
+from app.providers.mock_checkout import MockPayments
+from app.providers.razorpay_preview import upi_payout_preview
 
 
 class BudgetUpdate(Contract):
@@ -28,11 +33,28 @@ class HumanReviewRequest(Contract):
     note: str = Field(min_length=5,max_length=2000)
 
 
+class WalletBalance(Contract):
+    mode: Literal["synthetic"]
+    currency: Literal["INR"]
+    available_minor: int
+    funded_minor: int
+    spent_minor: int
+
+
+class WalletFunding(Contract):
+    amount_minor: int = Field(gt=0, le=100_000_000, strict=True)
+    idempotency_key: str = Field(pattern=r"^[A-Za-z0-9_-]{16,80}$")
+
+
 def create_app(database: Database | None = None):
     @asynccontextmanager
     async def lifespan(app):
         app.state.db = database or Database()
-        yield
+        app.state.wallet = MockPayments(app.state.db.path + ".payments.db")
+        try:
+            yield
+        finally:
+            app.state.wallet.engine.dispose()
 
     app = FastAPI(title="Sourcing Desk", version="0.1.0", lifespan=lifespan,
                   description="Local procurement skeleton. Fixture data, simulated payments, RFQ drafts only.")
@@ -58,6 +80,23 @@ def create_app(database: Database | None = None):
         with request.app.state.db.transaction() as c:
             return [task for run in list_runs(c) for task in run.human_reviews if task.status == "pending"]
 
+    @app.get("/api/payments/wallet", response_model=WalletBalance)
+    def wallet_balance(request: Request):
+        return request.app.state.wallet.wallet()
+
+    @app.post("/api/payments/wallet/fund", response_model=WalletBalance)
+    def fund_wallet(body: WalletFunding, request: Request):
+        return request.app.state.wallet.fund(body.idempotency_key, body.amount_minor)
+
+    @app.get("/api/runs/{run_id}/orders/{order_id}/payout-preview")
+    def payout_preview(run_id: str, order_id: str, request: Request):
+        with request.app.state.db.transaction() as c:
+            run = get_run(c, run_id)
+            order = next((order for order in run.orders if order.id == order_id), None)
+            if order is None:
+                return JSONResponse(status_code=404, content={"error": {"code": "NOT_FOUND", "message": "Order not found"}})
+            return upi_payout_preview(order)
+
     @app.post("/api/runs/{run_id}/human-review",response_model=WorkflowRun)
     def request_review(run_id: str,body: HumanReviewRequest,request: Request):
         with request.app.state.db.transaction() as c:
@@ -73,6 +112,14 @@ def create_app(database: Database | None = None):
             run = get_run(c,run_id)
             resolve_review(run,task_id,body)
             save_run(c,run)
+        return run
+
+    @app.post("/api/runs/{run_id}/human-reviews/{task_id}/supplier-quotes", response_model=WorkflowRun, status_code=201)
+    def submit_supplier_quote(run_id: str, task_id: str, body: SupplierQuoteSubmission, request: Request):
+        with request.app.state.db.transaction() as connection:
+            run = get_run(connection, run_id)
+            add_supplier_quote(run, task_id, body)
+            save_run(connection, run)
         return run
 
     @app.post("/api/runs", response_model=WorkflowRun, status_code=201)
@@ -172,7 +219,9 @@ def create_app(database: Database | None = None):
                     save_run(c,run)
                     return run
                 raise ValueError("Inspect run.error and configure the missing integration before creating a new run. Failed paid calls are not silently retried.")
-            if run.state == S.WAITING_FOR_APPROVAL and (run.plan_version != fingerprint(run) or any(q.expires_at <= now() for q in run.quotes)):
+            if run.state == S.WAITING_FOR_APPROVAL and (run.plan_version != fingerprint(run) or any(
+                not order_quote_current(run, order) for order in run.orders if order.state != "PAID"
+            )):
                 transition(run, S.DECIDING, "Replanning changed/expired quote; approval invalidated.")
             elif run.state == S.WAITING_FOR_CLARIFICATION:
                 raise ValueError("answer the clarification before resuming")

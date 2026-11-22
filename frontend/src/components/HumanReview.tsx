@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { Run } from '../types';
 import type { components } from '../types/schema';
+import { SupplierQuoteForm } from './SupplierQuoteForm';
 
 type Resolution = components['schemas']['HumanReviewResolution'];
 
@@ -14,7 +15,7 @@ export function HumanReviewInbox({ runs, onSelect }: { runs: Run[]; onSelect: (i
   </section>;
 }
 
-export function HumanReviewPanel({ run, busy, onResolve }: { run: Run; busy: boolean; onResolve: (taskId: string, resolution: Resolution) => Promise<void> }) {
+export function HumanReviewPanel({ run, busy, onResolve, onQuoteSaved }: { run: Run; busy: boolean; onResolve: (taskId: string, resolution: Resolution) => Promise<void>; onQuoteSaved: (updated: Run) => void }) {
   const task = (run.human_reviews ?? []).find(review => review.status === 'pending');
   const [reviewer, setReviewer] = useState('');
   const [action, setAction] = useState<Resolution['action']>('retry');
@@ -50,9 +51,10 @@ export function HumanReviewPanel({ run, busy, onResolve }: { run: Run; busy: boo
     <p>{task.summary}</p><p className="muted">Provider calls and ordering are paused. Review the evidence before deciding what happens next.</p>
     <details open><summary>Why the automated request could not finish</summary><ul className="review-blockers">{task.blockers.map(blocker => <li key={blocker}>{blocker.replaceAll('_', ' ')}</li>)}</ul></details>
     <p className="muted">Affected items: {task.spec_ids.map(id => run.specs.find(spec => spec.id === id)?.description ?? id).join('; ') || 'The entire request'}</p>
+    <SupplierQuoteForm run={run} task={task} reviewer={reviewer} busy={busy} onSaved={onQuoteSaved}/>
     <form onSubmit={event => void submit(event)}>
       <div className="form-row"><label>Reviewer name<input required minLength={2} value={reviewer} onChange={event => setReviewer(event.target.value)}/></label>
-        <label>Decision<select value={action} onChange={event => setAction(event.target.value as Resolution['action'])}><option value="retry">Revise and retry</option><option value="manual_completion">Record manual handling</option><option value="cancel">Cancel remaining work</option></select></label></div>
+        <label>Decision<select value={action} onChange={event => setAction(event.target.value as Resolution['action'])}><option value="retry">Revise and retry</option><option value="evaluate_quotes" disabled={!run.quotes.some(quote => quote.reviewed_terms)}>Evaluate supplier quotes</option><option value="manual_completion">Record manual handling</option><option value="cancel">Cancel remaining work</option></select></label></div>
       <label>Review notes<textarea required minLength={5} value={note} onChange={event => setNote(event.target.value)} placeholder="Explain the evidence checked, changes requested, or how the items were handled."/></label>
       {action === 'manual_completion' && <><label>Completion reference<input required value={reference} onChange={event => setReference(event.target.value)} placeholder="Receipt, order reference, RFQ record or procurement ticket"/></label><p className="muted">Records the reviewer's report for the affected items. It does not create an automated payment or independently verify a purchase.</p></>}
       {action === 'retry' && <details open><summary>Optional request revisions</summary><label>Revised request text<textarea value={requestText} onChange={event => setRequestText(event.target.value)} placeholder="Leave empty to keep the existing request"/></label>
@@ -62,7 +64,7 @@ export function HumanReviewPanel({ run, busy, onResolve }: { run: Run; busy: boo
         <p className="muted">A retry may call providers. Existing spending counts toward the same run limit; retrying does not reset budgets or payment identities.</p>
       </details>}
       {error && <p className="error" role="alert">{error}</p>}
-      <button className="primary" disabled={busy}>{action === 'retry' ? 'Save review and retry' : action === 'manual_completion' ? 'Record manual handling' : 'Cancel remaining work'}</button>
+      <button className="primary" disabled={busy}>{action === 'evaluate_quotes' ? 'Evaluate supplier quotes' : action === 'retry' ? 'Save review and retry' : action === 'manual_completion' ? 'Record manual handling' : 'Cancel remaining work'}</button>
     </form>
   </section>;
 }

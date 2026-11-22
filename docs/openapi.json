@@ -44,6 +44,108 @@
         }
       }
     },
+    "/api/payments/wallet": {
+      "get": {
+        "summary": "Wallet Balance",
+        "operationId": "wallet_balance_api_payments_wallet_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WalletBalance"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/payments/wallet/fund": {
+      "post": {
+        "summary": "Fund Wallet",
+        "operationId": "fund_wallet_api_payments_wallet_fund_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WalletFunding"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WalletBalance"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/runs/{run_id}/orders/{order_id}/payout-preview": {
+      "get": {
+        "summary": "Payout Preview",
+        "operationId": "payout_preview_api_runs__run_id__orders__order_id__payout_preview_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Order Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/runs/{run_id}/human-review": {
       "post": {
         "summary": "Request Review",
@@ -129,6 +231,64 @@
         },
         "responses": {
           "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowRun"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/runs/{run_id}/human-reviews/{task_id}/supplier-quotes": {
+      "post": {
+        "summary": "Submit Supplier Quote",
+        "operationId": "submit_supplier_quote_api_runs__run_id__human_reviews__task_id__supplier_quotes_post",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SupplierQuoteSubmission"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
             "description": "Successful Response",
             "content": {
               "application/json": {
@@ -902,19 +1062,47 @@
             "default": "INR"
           },
           "goods_minor": {
-            "type": "integer",
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Goods Minor"
           },
           "shipping_minor": {
-            "type": "integer",
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Shipping Minor"
           },
           "duty_minor": {
-            "type": "integer",
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Duty Minor"
           },
           "tax_minor": {
-            "type": "integer",
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Tax Minor"
           },
           "total_minor": {
@@ -1126,6 +1314,7 @@
             "type": "string",
             "enum": [
               "retry",
+              "evaluate_quotes",
               "manual_completion",
               "cancel"
             ],
@@ -1320,6 +1509,7 @@
                 "type": "string",
                 "enum": [
                   "retry",
+                  "evaluate_quotes",
                   "manual_completion",
                   "cancel"
                 ]
@@ -1660,6 +1850,16 @@
             },
             "type": "object",
             "title": "Signals"
+          },
+          "reviewed_terms": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReviewedQuoteTerms"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,
@@ -1683,7 +1883,8 @@
           "expires_at",
           "evidence_ids",
           "status",
-          "signals"
+          "signals",
+          "reviewed_terms"
         ],
         "title": "Quote"
       },
@@ -1794,6 +1995,55 @@
           "changed_decision"
         ],
         "title": "ResearchPurchase"
+      },
+      "ReviewedQuoteTerms": {
+        "properties": {
+          "request_fingerprint": {
+            "type": "string",
+            "title": "Request Fingerprint"
+          },
+          "total_minor": {
+            "type": "integer",
+            "maximum": 100000000000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Total Minor"
+          },
+          "destination": {
+            "type": "string",
+            "title": "Destination"
+          },
+          "reviewer": {
+            "type": "string",
+            "title": "Reviewer"
+          },
+          "supplier_kind": {
+            "type": "string",
+            "enum": [
+              "manufacturer",
+              "distributor",
+              "retailer",
+              "service_provider",
+              "trader",
+              "unknown"
+            ],
+            "title": "Supplier Kind"
+          },
+          "identity_reference": {
+            "type": "string",
+            "title": "Identity Reference"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_fingerprint",
+          "total_minor",
+          "destination",
+          "reviewer",
+          "supplier_kind",
+          "identity_reference"
+        ],
+        "title": "ReviewedQuoteTerms"
       },
       "RunState": {
         "type": "string",
@@ -2349,6 +2599,136 @@
         ],
         "title": "SupplierCheck"
       },
+      "SupplierQuoteSubmission": {
+        "properties": {
+          "spec_id": {
+            "type": "string",
+            "title": "Spec Id"
+          },
+          "supplier_name": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 2,
+            "title": "Supplier Name"
+          },
+          "supplier_domain": {
+            "type": "string",
+            "maxLength": 253,
+            "pattern": "^(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\\.)+[A-Za-z]{2,}$",
+            "title": "Supplier Domain"
+          },
+          "supplier_kind": {
+            "type": "string",
+            "enum": [
+              "manufacturer",
+              "distributor",
+              "retailer",
+              "service_provider",
+              "trader",
+              "unknown"
+            ],
+            "title": "Supplier Kind"
+          },
+          "identity_reference": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 5,
+            "title": "Identity Reference"
+          },
+          "quote_reference": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 3,
+            "title": "Quote Reference"
+          },
+          "quote_excerpt": {
+            "type": "string",
+            "maxLength": 8000,
+            "minLength": 10,
+            "title": "Quote Excerpt"
+          },
+          "reviewer": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 2,
+            "title": "Reviewer"
+          },
+          "quantity": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Quantity"
+          },
+          "unit": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Unit"
+          },
+          "destination": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 2,
+            "title": "Destination"
+          },
+          "delivery_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Delivery At"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          },
+          "total_minor": {
+            "type": "integer",
+            "maximum": 100000000000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Total Minor"
+          },
+          "includes_all_costs": {
+            "type": "boolean",
+            "const": true,
+            "title": "Includes All Costs"
+          },
+          "requirements_and_availability_confirmed": {
+            "type": "boolean",
+            "const": true,
+            "title": "Requirements And Availability Confirmed"
+          },
+          "authorized_distributor": {
+            "type": "boolean",
+            "title": "Authorized Distributor",
+            "default": false
+          },
+          "manufacturer_verified": {
+            "type": "boolean",
+            "title": "Manufacturer Verified",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "spec_id",
+          "supplier_name",
+          "supplier_domain",
+          "supplier_kind",
+          "identity_reference",
+          "quote_reference",
+          "quote_excerpt",
+          "reviewer",
+          "quantity",
+          "unit",
+          "destination",
+          "delivery_at",
+          "expires_at",
+          "total_minor",
+          "includes_all_costs",
+          "requirements_and_availability_confirmed"
+        ],
+        "title": "SupplierQuoteSubmission"
+      },
       "ValidationError": {
         "properties": {
           "loc": {
@@ -2381,6 +2761,64 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "WalletBalance": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "const": "synthetic",
+            "title": "Mode"
+          },
+          "currency": {
+            "type": "string",
+            "const": "INR",
+            "title": "Currency"
+          },
+          "available_minor": {
+            "type": "integer",
+            "title": "Available Minor"
+          },
+          "funded_minor": {
+            "type": "integer",
+            "title": "Funded Minor"
+          },
+          "spent_minor": {
+            "type": "integer",
+            "title": "Spent Minor"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "mode",
+          "currency",
+          "available_minor",
+          "funded_minor",
+          "spent_minor"
+        ],
+        "title": "WalletBalance"
+      },
+      "WalletFunding": {
+        "properties": {
+          "amount_minor": {
+            "type": "integer",
+            "maximum": 100000000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Amount Minor"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{16,80}$",
+            "title": "Idempotency Key"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "amount_minor",
+          "idempotency_key"
+        ],
+        "title": "WalletFunding"
       },
       "WorkflowEvent": {
         "properties": {
