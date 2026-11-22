@@ -1,0 +1,13 @@
+{
+  "name": "leather_goods", "version": "1", "spec_fields": ["material", "finish", "size", "moq", "location"],
+  "required_fields": ["target location"],
+  "clarification_rules": ["A supplier shortlist does not require an invented order quantity"],
+  "substitution_constraints": ["Material and grade must be approved before a purchase"],
+  "discovery_hints": ["Manufacturer sites", "B2B listings in Uttar Pradesh"],
+  "trust_signals": ["identity", "factory", "stable", "complaints_clear"],
+  "allowed_kinds": ["manufacturer"],
+  "weights": {"identity": 30, "factory": 40, "stable": 20, "complaints_clear": 10},
+  "threshold": 80, "freshness_hours": 48, "ordering_method": "rfq",
+  "duty_bps": 0, "tax_bps": 0, "tax_base": "goods_shipping_duty", "fx_to_inr": {"INR": "1"},
+  "research_cost_minor": 4000, "research_max_order_bps": 500
+}
