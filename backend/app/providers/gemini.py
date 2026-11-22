@@ -88,7 +88,7 @@ class GeminiClient:
             c.commit()
         payload = {"systemInstruction":{"parts":[{"text":system}]},
                    "contents":[{"role":"user","parts":[{"text":content}]}],
-                   "generationConfig":{"responseMimeType":"application/json", "responseJsonSchema":contract, "maxOutputTokens":4096}}
+                   "generationConfig":{"responseMimeType":"application/json", "responseJsonSchema":contract, "maxOutputTokens":16384}}
         if page_urls:
             # Gemini 2.5 supports URL Context with text output. Validate the JSON locally.
             payload["tools"] = [{"urlContext": {}}]

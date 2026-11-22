@@ -54,7 +54,7 @@ Then open the dashboard, enable **Use Gemini to parse the request and extract su
 
 - Normally two model generations per request, one at each stage; clarification answers require another parse.
 - Hard maximum of four generation attempts per run, including failures and clarification rounds.
-- At most 60,000 input characters and 4,096 output tokens per call.
+- At most 60,000 input characters and 16,384 output tokens per structured call.
 - Persistent response cache in `<workflow-db>.llm.db`, keyed by run, model, stage, input, prompt and schema. Replaying identical work reuses its validated response.
 - Intent is committed before contacting Gemini. An ambiguous network outcome remains pending and is not automatically retried. Refused, truncated, malformed or schema-invalid output is not applied.
 - Prompt/provider error bodies and authentication headers are not logged. Usage records contain stage, model, state and token counts.

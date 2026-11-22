@@ -20,8 +20,8 @@ The GCP service account is for **Gemini calls through Vertex AI only**. Its rule
 | Variable | Default | Effect |
 |---|---|---|
 | `ACCESS_CODE` | optional | Every `/api` route except `/api/health` needs the `X-Access-Code` header. The dashboard asks for it once and keeps it in the browser. |
-| `MAX_RUNS_PER_DAY` | 10 | New requests per rolling 24 hours. Each one can spend Gemini and Crustdata credits. |
-| `MAX_CREDIT_BUDGET` | 25 | Highest Crustdata credit ceiling a run can set or raise to. |
+| `MAX_RUNS_PER_DAY` | unset (unlimited) | New requests per rolling 24 hours. Each one can spend Gemini and Crustdata credits. |
+| `MAX_CREDIT_BUDGET` | unset (unlimited) | Highest Crustdata credit ceiling a run can set or raise to. |
 
 Gemini also keeps its existing per-run cap of four generations. Leaving these variables unset (local development) turns the guards off.
 

@@ -13,10 +13,8 @@ services:
       # Optional: set ACCESS_CODE in the dashboard to require a passcode.
       - key: CRUSTDATA_API_KEY
         sync: false
-      - key: MAX_RUNS_PER_DAY
-        value: "10"
-      - key: MAX_CREDIT_BUDGET
-        value: "25"
+      # Optional spend guards (unset = unlimited, as for judging):
+      # MAX_RUNS_PER_DAY, MAX_CREDIT_BUDGET
       # Gemini through Vertex AI. Upload the service-account JSON as a Secret File
       # named gcp-sa.json; Render mounts it at /etc/secrets/gcp-sa.json.
       - key: GOOGLE_APPLICATION_CREDENTIALS

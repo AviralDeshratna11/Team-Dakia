@@ -27,6 +27,9 @@ const STEP: Record<string, string> = {
 };
 
 type Health = { gemini_configured?: boolean; crustdata_configured?: boolean };
+// Fetched once at startup, in parallel with the stylesheet; sending waits for it so the
+// first message never falls back to sample data just because this reply was still in flight.
+const healthPromise: Promise<Health> = fetch('/api/health').then(r => r.json() as Promise<Health>).catch(() => ({}));
 type Entry = { kind: 'user'; text: string } | { kind: 'agent'; runId: string; segment: number } | { kind: 'note'; text: string; error?: boolean };
 type Step = { id: string; title: string; detail: string; thought?: boolean };
 
@@ -206,7 +209,7 @@ function App() {
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
 
-  useEffect(() => { fetch('/api/health').then(r => r.json()).then(setHealth).catch(() => {}); }, []);
+  useEffect(() => { void healthPromise.then(setHealth); }, []);
   useEffect(() => save('sourcing-thread', thread), [thread]);
 
   const runIds = [...new Set(thread.flatMap(e => e.kind === 'agent' ? [e.runId] : []))];
@@ -269,10 +272,13 @@ function App() {
         const electronics = !leather && (standalone ? electronicsWords.test(message) : previous!.category === 'electronics');
         const original = previous ? previous.text.split(/\n(?:Clarification|More detail):/)[0] : '';
         const requestText = standalone ? message : `${message}\n\nEarlier in this conversation I asked: ${original}`;
-        const mode = health.crustdata_configured ? 'live' : 'fixture';
+        // Live company data where it can finish the job: Crustdata verifies companies but not part
+        // prices or stock, so electronics purchase plans run on the sample catalogue (labelled in the trace).
+        const ready = await healthPromise;
+        const mode = ready.crustdata_configured && !electronics ? 'live' : 'fixture';
         const r = await api<Run>('/runs', 'POST', { text: requestText, category: leather ? 'leather_goods' : electronics ? 'electronics' : 'general', request_type: leather ? 'shortlist' : 'purchase',
           destination: leather ? 'Uttar Pradesh, India' : 'Bengaluru, India', deadline: new Date(Date.now() + 21 * 86400000).toISOString(),
-          research_budget_minor: 200000, approval_threshold_minor: 100000000, mode, scenario: 'normal', specs: [], llm_enabled: !!health.gemini_configured, provider_credit_limit: 5 });
+          research_budget_minor: 200000, approval_threshold_minor: 100000000, mode, scenario: 'normal', specs: [], llm_enabled: !!ready.gemini_configured, provider_credit_limit: 1000 });
         setRuns(p => ({ ...p, [r.id]: r }));
         add({ kind: 'agent', runId: r.id, segment: 0 });
       }

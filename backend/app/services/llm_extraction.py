@@ -182,7 +182,11 @@ class LLMExtractionService:
                     if not any(e.id == derived.id for e in run.evidence): run.evidence.append(derived)
                     for quote in quotes:
                         if derived.id not in quote.evidence_ids: quote.evidence_ids.append(derived.id)
-                        quote.status = "unverified"  # Extraction never independently authorizes a purchase.
+                        # Extraction never independently authorizes a purchase. A shortlist buys
+                        # nothing (RFQs stay drafts), so model-derived facts are kept as unverified
+                        # evidence without downgrading the company checks that qualify a maker.
+                        if run.request.request_type == "purchase":
+                            quote.status = "unverified"
                 valid_facts.append(fact)
             accepted.append(insight.model_copy(update={"facts":valid_facts}))
         previous = [i for i in run.supplier_insights if i.get("supplier_id") not in {item.supplier_id for item in accepted}] if follow_up else []
