@@ -5,3 +5,6 @@ __pycache__/
 runs/
 .cache/
 .ipynb_checkpoints/
+# never commit cloud credentials
+gen-lang-client-*.json
+*service-account*.json
