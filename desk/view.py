@@ -7,7 +7,7 @@ import re
 import pandas as pd
 
 from desk.crustdata import read_cache
-from desk.schemas import FindResult
+from desk.schemas import FindResult, SpecResult
 
 
 def quotes(find: FindResult, alternatives: bool = False) -> pd.DataFrame:
@@ -15,9 +15,15 @@ def quotes(find: FindResult, alternatives: bool = False) -> pd.DataFrame:
     return pd.DataFrame([{
         "vendor": q.vendor, "status": q.status.value, "mpn": q.mpn, "maker": q.manufacturer,
         "stock": q.stock, "moq": q.moq, "buy_qty": q.buy_qty, "unit": q.unit_price, "cur": q.currency,
-        "unit_inr": q.unit_price_inr, "note": q.note, "by": q.extracted_by, "url": q.url,
+        "unit_inr": q.unit_price_inr, "flags": "; ".join(q.flags), "note": q.note, "by": q.extracted_by, "url": q.url,
         "cache_key": q.cache_key,
     } for q in rows])
+
+
+def specs(sr: SpecResult) -> pd.DataFrame:
+    return pd.DataFrame([{"line_id": s.line_id, "description": s.description, "mpn": s.mpn, "maker": s.maker,
+                          "alternates": ", ".join(a.mpn for a in s.alternates), "qty": s.qty,
+                          "params": s.params, "source": s.source} for s in sr.specs])
 
 
 def tiers(find: FindResult) -> pd.DataFrame:

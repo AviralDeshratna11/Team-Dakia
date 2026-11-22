@@ -71,6 +71,17 @@ v0 runs the whole BOM end to end: steps 1–2 are real, 3, 4 and 6 are stubs, an
 
 ---
 
+## 2026-11-22 · Step 1 on Gemini, clones flagged instead of rejected (Sid)
+
+- **Step 1 now reads the founder's own words** with `gemini-2.5-flash` on Vertex AI (temperature 0, cached). It returns request details, specs, up to 3 candidate part numbers per line, questions and assumptions. Hand-written `lines` in the request still skip the LLM (`examples/electronics_bom_manual.yaml`).
+- **Gemini's structured output can't fill free-form dicts.** `params: dict[str, str]` came back empty every time, so we use a list of `{name, value}` pairs.
+- **It gave a family name, not a part number:** `ESP32-S3-WROOM-1` instead of `-N8R8`. LCSC only lists the full variants (`-N8`, `-N4`, `-1U-N4`), so it was `NO_MATCH`. The prompt now demands the full orderable number with every suffix.
+- **It's question-happy.** On the brief's request it asks about 3 of 4 parts (ESP32 memory, cap voltage rating, USB-C type); only the LDO goes through. The vague request ("a small regulator") correctly gets one question instead of a guess. **Open: when to assume a standard default vs. ask.**
+- **Clones are flagged, not rejected.** The same part number from another maker gets a `possible clone` flag. Code never picks a flagged quote; if one is cheaper than the pick, or is the only option, the decision lists it under `founder_review` with the price difference. Example: TECH PUBLIC AP2112K-3.3TRG1 is ₹1,025 cheaper than the Diodes part for 500 units.
+- **The retry now also covers blocked-only results.** Mouser is always blocked, so "no site has the part" showed as `BLOCKED` and the alternate part number was never tried.
+
+---
+
 ## Later (not now)
 
 - When data is missing or blocked, pay third-party data services for it.

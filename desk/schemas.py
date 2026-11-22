@@ -20,24 +20,52 @@ class BomLine(BaseModel):
 
 
 class Request(BaseModel):
+    """Only `text` is required: step 1 reads the rest from it. Fields given here override it,
+    and `lines` given here skip the LLM entirely (manual mode)."""
     text: str
-    category: str
-    units: int
-    deliver_to: str
-    deadline: date
-    data_budget_inr: float
-    lines: list[BomLine]
+    category: str | None = None
+    units: int | None = None
+    deliver_to: str | None = None
+    deadline: date | None = None
+    data_budget_inr: float | None = None
+    lines: list[BomLine] = []
+    answers: list[str] = []          # founder's answers to step 1's questions, e.g. "Q: ... A: ..."
 
 
 # ---------- step 1: spec ----------
 
+class PartCandidate(BaseModel):
+    mpn: str
+    maker: str | None = None
+
+
 class Spec(BaseModel):
     line_id: str
     description: str
-    mpn: str
+    part_type: str | None = None
+    mpn: str                         # the part we search for first
     maker: str | None
+    alternates: list[PartCandidate] = []   # tried if mpn finds nothing (one retry)
     params: dict[str, str]
     qty: int                         # units x qty_per_unit
+    source: str = "founder"          # "founder" (given) or the model that suggested the mpn
+
+
+class Question(BaseModel):
+    line_id: str | None              # None = about the whole request
+    question: str
+
+
+class SpecResult(BaseModel):
+    parsed_by: str                   # "manual" or the Gemini model
+    category: str
+    units: int | None
+    deliver_to: str | None
+    deadline: date | None
+    data_budget_inr: float | None
+    specs: list[Spec]                # ready for step 2
+    questions: list[Question]        # lines held back until the founder answers
+    assumptions: list[str]           # things the model assumed that the text didn't say
 
 
 # ---------- step 2: find ----------
@@ -79,6 +107,7 @@ class Quote(BaseModel):
     moq: int | None = None
     tiers: list[PriceTier] = []
     params: dict[str, str] = {}
+    flags: list[str] = []            # e.g. possible clone: shown to the founder, never auto-picked
     buy_qty: int | None = None       # qty we'd actually buy (>= need, if MOQ forces it)
     unit_price: float | None = None  # at buy_qty, in the vendor's currency
     currency: str | None = None
@@ -95,6 +124,9 @@ class Lead(BaseModel):
 
 class FindResult(BaseModel):
     line_id: str
+    mpn: str                         # the part number these quotes are for
+    maker: str | None
+    tried: list[str] = []            # "MPN: STATUS" for each part number searched
     status: Status
     reason: str
     quotes: list[Quote]              # quotes for our exact part (any status but NO_MATCH)
@@ -115,10 +147,12 @@ class Check(BaseModel):
 
 class Decision(BaseModel):
     line_id: str
+    status: str                      # PICKED | NEEDS_FOUNDER | NONE
     rule: str
     picked: Quote | None
     total_inr: float | None
     reason: str
+    founder_review: list[dict] = []  # flagged options the founder should see (e.g. cheaper possible clone)
     considered: list[dict]
 
 

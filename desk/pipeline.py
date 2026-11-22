@@ -18,15 +18,16 @@ def load_request(path: str | Path) -> Request:
 
 def run(request_path: str | Path, use_cache: bool = True) -> Run:
     req = load_request(request_path)
-    pack = steps.load_pack(req.category)
+    packs = steps.load_packs()
     cd = Crustdata(use_cache=use_cache)
     r = Run(Path(request_path).stem)
 
     r.record("00_request", req)
-    specs = r.step("01_spec", steps.understand_specs, req)
+    sr = r.step("01_spec", steps.understand_specs, req, packs)
+    pack, specs = packs[sr.category], sr.specs
     finds = [r.step("02_find", steps.find_suppliers, s, pack, cd, part=s.line_id) for s in specs]
     checks = r.step("03_check", steps.check_suppliers, finds)
-    r.step("04_buy_data", steps.buy_data, finds, req.data_budget_inr)
+    r.step("04_buy_data", steps.buy_data, finds, sr.data_budget_inr or 0)
     decisions = [r.step("05_decide", steps.decide, s, f, checks, part=s.line_id) for s, f in zip(specs, finds)]
     for d in decisions:
         r.step("06_order", steps.place_order, d, r.id, part=d.line_id)

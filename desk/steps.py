@@ -1,6 +1,7 @@
 """The six steps. Each is a plain function: typed input in, typed output out.
 
-v0: steps 1-2 are real; 3, 4 and 6 are stubs; 5 is a placeholder rule (cheapest FOUND quote).
+v0: steps 1-2 are real (step 1 lives in understand.py); 3, 4 and 6 are stubs; 5 is a placeholder
+rule (cheapest unflagged FOUND quote).
 """
 
 from __future__ import annotations
@@ -14,8 +15,9 @@ import yaml
 
 from desk import extract
 from desk.crustdata import Crustdata
-from desk.schemas import (STATUS_RANK, Check, Decision, FindResult, Lead, Order, PriceTier, Quote,
-                          Request, Spec, Status)
+from desk.schemas import (STATUS_RANK, Check, Decision, FindResult, Lead, Order, PartCandidate, PriceTier,
+                          Quote, Spec, Status)
+from desk.understand import understand_specs  # noqa: F401  (step 1)
 
 PACKS_DIR = Path(__file__).parent / "packs"
 
@@ -24,22 +26,28 @@ def load_pack(category: str) -> dict:
     return yaml.safe_load((PACKS_DIR / f"{category}.yaml").read_text())
 
 
-# ---------- step 1: understand the specs ----------
-
-def understand_specs(req: Request) -> list[Spec]:
-    """v0: no LLM. Every line must already carry an exact part number."""
-    specs = []
-    for line in req.lines:
-        if not line.mpn:
-            raise ValueError(f"line {line.line_id!r} has no mpn; v0 can't pick a part from a description yet")
-        specs.append(Spec(line_id=line.line_id, description=line.description, mpn=line.mpn,
-                          maker=line.maker, params=line.params, qty=req.units * line.qty_per_unit))
-    return specs
+def load_packs() -> dict[str, dict]:
+    return {p.stem: yaml.safe_load(p.read_text()) for p in sorted(PACKS_DIR.glob("*.yaml"))}
 
 
 # ---------- step 2: find suppliers ----------
 
 def find_suppliers(spec: Spec, pack: dict, cd: Crustdata) -> FindResult:
+    """Search the first part number; if no site has it (only BLOCKED, NO_MATCH or NOT_FOUND),
+    retry once with the next candidate and keep whichever attempt did better."""
+    tried, best = [], None
+    for cand in [PartCandidate(mpn=spec.mpn, maker=spec.maker), *spec.alternates][:2]:
+        res = _find_one(spec.model_copy(update={"mpn": cand.mpn, "maker": cand.maker}), pack, cd)
+        tried.append(f"{cand.mpn}: {res.status.value}")
+        if best is None or STATUS_RANK.index(res.status) < STATUS_RANK.index(best.status):
+            best = res
+        if STATUS_RANK.index(res.status) < STATUS_RANK.index(Status.BLOCKED):
+            break
+    best.tried = tried
+    return best
+
+
+def _find_one(spec: Spec, pack: dict, cd: Crustdata) -> FindResult:
     mpn = urlquote(spec.mpn, safe="")
     dists = pack["distributors"]
 
@@ -76,9 +84,10 @@ def find_suppliers(spec: Spec, pack: dict, cd: Crustdata) -> FindResult:
 
     statuses = [q.status for q in exact] or [Status.NO_MATCH if alternatives else Status.NOT_FOUND]
     best = min(statuses, key=STATUS_RANK.index)
-    reason = "; ".join(f"{q.vendor}: {q.status.value}" + (f" ({q.note})" if q.note else "") for q in quotes)
-    return FindResult(line_id=spec.line_id, status=best, reason=reason, quotes=exact,
-                      alternatives=alternatives, leads=leads)
+    reason = "; ".join(f"{q.vendor}: {q.status.value}" + (f" ({q.note})" if q.note else "")
+                       + (" [FLAGGED]" if q.flags else "") for q in quotes)
+    return FindResult(line_id=spec.line_id, mpn=spec.mpn, maker=spec.maker, status=best, reason=reason,
+                      quotes=exact, alternatives=alternatives, leads=leads)
 
 
 def _quote(spec: Spec, dist: dict, page: dict, pack: dict) -> Quote:
@@ -99,9 +108,7 @@ def _quote(spec: Spec, dist: dict, page: dict, pack: dict) -> Quote:
         q.status, q.note = Status.NO_MATCH, f"page is for {q.mpn}, not {spec.mpn}"
         return q
     if spec.maker and q.manufacturer and not extract.same_maker(q.manufacturer, spec.maker):
-        q.status = Status.NO_MATCH
-        q.note = f"same part number but made by {q.manufacturer}, not {spec.maker}: possible clone"
-        return q
+        q.flags.append(f"possible clone: same part number, made by {q.manufacturer}, not {spec.maker}")
 
     _price_at_qty(q, spec.qty, pack["fx_to_inr"])
     if q.unit_price is None:
@@ -177,26 +184,45 @@ def buy_data(finds: list[FindResult], budget_inr: float) -> list[dict]:
 # ---------- step 5: decide (placeholder rule) ----------
 
 def decide(spec: Spec, find: FindResult, checks: list[Check]) -> Decision:
-    rule = "v0: cheapest FOUND quote by item cost (no landed cost, no reliability yet)"
-    considered = [{"vendor": q.vendor, "status": q.status.value, "unit_price_inr": q.unit_price_inr,
-                   "buy_qty": q.buy_qty, "note": q.note, "url": q.url} for q in find.quotes]
-    ok = [q for q in find.quotes if q.status == Status.FOUND and q.unit_price_inr is not None]
-    if not ok:
-        return Decision(line_id=spec.line_id, rule=rule, picked=None, total_inr=None, considered=considered,
-                        reason=f"no vendor qualifies ({find.status.value}): {find.reason}")
-    best = min(ok, key=lambda q: q.unit_price_inr * q.buy_qty)
-    total = round(best.unit_price_inr * best.buy_qty, 2)
-    reason = (f"{best.vendor}: {best.buy_qty} x ₹{best.unit_price_inr} = ₹{total}; stock {best.stock}; "
-              f"source {best.url} fetched {best.fetched_at:%Y-%m-%d %H:%M} UTC")
-    return Decision(line_id=spec.line_id, rule=rule, picked=best, total_inr=total, reason=reason,
-                    considered=considered)
+    """Cheapest unflagged FOUND quote. Flagged quotes (e.g. possible clones) are never picked by code:
+    they go to the founder, but only when they'd change the result (cheaper, or the only option)."""
+    rule = "v0: cheapest unflagged FOUND quote by item cost (no landed cost, no reliability yet)"
+    considered = [{"vendor": q.vendor, "mpn": q.mpn, "maker": q.manufacturer, "status": q.status.value,
+                   "unit_price_inr": q.unit_price_inr, "buy_qty": q.buy_qty, "flags": q.flags,
+                   "note": q.note, "url": q.url} for q in find.quotes]
+    found = [q for q in find.quotes if q.status == Status.FOUND and q.unit_price_inr is not None]
+
+    def total(q: Quote) -> float:
+        return round(q.unit_price_inr * q.buy_qty, 2)
+
+    clean = [q for q in found if not q.flags]
+    best = min(clean, key=total) if clean else None
+    review = [{"vendor": q.vendor, "mpn": q.mpn, "maker": q.manufacturer, "flags": q.flags,
+               "unit_price_inr": q.unit_price_inr, "total_inr": total(q), "url": q.url,
+               "ask": (f"Cheaper than the pick by ₹{round(total(best) - total(q), 2)}, but flagged. Accept it?"
+                       if best else "The only option found, but flagged. Accept it?")}
+              for q in found if q.flags and (best is None or total(q) < total(best))]
+
+    if best is None:
+        status = "NEEDS_FOUNDER" if review else "NONE"
+        reason = ("only flagged options found; waiting for the founder" if review
+                  else f"no vendor qualifies ({find.status.value}): {find.reason}")
+        return Decision(line_id=spec.line_id, status=status, rule=rule, picked=None, total_inr=None,
+                        reason=reason, founder_review=review, considered=considered)
+
+    reason = (f"{best.vendor}: {best.buy_qty} x ₹{best.unit_price_inr} = ₹{total(best)}; {best.manufacturer} "
+              f"{best.mpn}; stock {best.stock}; source {best.url} fetched {best.fetched_at:%Y-%m-%d %H:%M} UTC")
+    if review:
+        reason += f"; {len(review)} cheaper flagged option(s) sent to the founder"
+    return Decision(line_id=spec.line_id, status="PICKED", rule=rule, picked=best, total_inr=total(best),
+                    reason=reason, founder_review=review, considered=considered)
 
 
 # ---------- step 6: order (STUB) ----------
 
 def place_order(decision: Decision, run_id: str) -> Order | None:
     q = decision.picked
-    if q is None:
+    if decision.status != "PICKED" or q is None:
         return None
     key = hashlib.sha256(f"{run_id}:{decision.line_id}:{q.vendor_domain}".encode()).hexdigest()[:16]
     return Order(line_id=decision.line_id, vendor=q.vendor, qty=q.buy_qty, amount_inr=decision.total_inr,

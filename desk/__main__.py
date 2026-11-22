@@ -17,11 +17,28 @@ def show(records: list[dict]) -> None:
     print(view.steps(records).to_string(index=False))
     print()
     for r in records:
+        if r["step"] == "01_spec" and r["output"]:
+            o = r["output"]
+            print(f"SPEC ({o['parsed_by']}): {o['category']}, {o['units']} units -> {o['deliver_to']} "
+                  f"by {o['deadline']}, data budget ₹{o['data_budget_inr']}")
+            for s in o["specs"]:
+                alts = ", ".join(a["mpn"] for a in s["alternates"])
+                print(f"  [{s['line_id']}] {s['description']} -> {s['mpn']} ({s['maker']}) x{s['qty']}"
+                      + (f"; alternates: {alts}" if alts else ""))
+            for q in o["questions"]:
+                print(f"  QUESTION [{q['line_id'] or 'request'}]: {q['question']}")
+            for a in o["assumptions"]:
+                print(f"  assumed: {a}")
+            print()
         if r["step"] == "02_find" and r["output"]:
             o = r["output"]
-            print(f"[{r['part']}] {o['status']}: {o['reason']}")
+            print(f"[{r['part']}] {o['status']} ({' | '.join(o['tried'])}): {o['reason']}")
         if r["step"] == "05_decide" and r["output"]:
-            print(f"[{r['part']}] DECISION: {r['output']['reason']}")
+            o = r["output"]
+            print(f"[{r['part']}] DECISION {o['status']}: {o['reason']}")
+            for f in o["founder_review"]:
+                print(f"    FOR FOUNDER: {f['vendor']} {f['maker']} {f['mpn']} ₹{f['total_inr']} "
+                      f"{f['flags']} -> {f['ask']}")
 
 
 def main() -> None:

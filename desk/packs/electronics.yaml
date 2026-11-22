@@ -2,6 +2,11 @@
 
 name: electronics
 
+# Told to step 1's model: which specs decide whether a part fits.
+spec_hint: >
+  For electronics, use names like output_voltage, output_current, capacitance, voltage_rating,
+  tolerance, dielectric, package (e.g. SOT-23, 0805), connector_type, flash, psram.
+
 # Currency -> INR. PLACEHOLDER rates: set them to the day's rate before the demo.
 fx_to_inr:
   INR: 1.0
