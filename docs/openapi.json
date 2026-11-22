@@ -851,6 +851,22 @@
           }
         }
       }
+    },
+    "/api/access": {
+      "get": {
+        "summary": "Access",
+        "operationId": "access_api_access_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -936,8 +952,7 @@
                 "minimum": 0.0
               },
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,2}0*$"
+                "type": "string"
               },
               {
                 "type": "null"
@@ -1408,8 +1423,7 @@
                 "minimum": 0.0
               },
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,2}0*$"
+                "type": "string"
               },
               {
                 "type": "null"
@@ -2284,8 +2298,7 @@
                 "minimum": 0.0
               },
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,2}0*$"
+                "type": "string"
               }
             ],
             "title": "Provider Credit Limit",
@@ -2408,7 +2421,6 @@
           },
           "provider_credit_limit": {
             "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,2}0*$",
             "title": "Provider Credit Limit",
             "default": "0.2"
           },
@@ -2947,6 +2959,13 @@
           "type": {
             "type": "string",
             "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
           }
         },
         "type": "object",

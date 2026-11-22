@@ -1,140 +1,328 @@
 import { StrictMode, useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Activity, Box, Check, ChevronDown, CircleHelp, ClipboardList, FileText, Layers3, LoaderCircle, Plus, Search, ShieldCheck, Wallet } from 'lucide-react';
-import { api } from './api/client';
-import type { Run, Ledger, Reservation, RequestBody, Spec } from './types';
+import { ArrowUp, Check, ChevronDown, ChevronRight, CircleAlert, CircleHelp, Copy, ExternalLink, Layers3, LoaderCircle, Mail, Plus, ShieldCheck, Sparkles, X } from 'lucide-react';
+import { api, AccessDenied, setAccessCode } from './api/client';
+import type { Run } from './types';
 import './styles.css';
-import { LLMInsights } from './components/LLMInsights';
-import { ProviderUsage } from './components/ProviderUsage';
-import { PayoutPreview, SyntheticWallet } from './components/SyntheticWallet';
-import { HumanReviewInbox, HumanReviewPanel } from './components/HumanReview';
-import { TrustCards, CreditLedger, plain } from './components/TrustCards';
+import { TrustCards, plain } from './components/TrustCards';
 
 const money = (minor: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(minor / 100);
-const date = (value: string) => new Date(value).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' });
-const stageNames = ['PARSING', 'DISCOVERING', 'VERIFYING', 'RESEARCHING', 'DECIDING', 'SCREENING', 'EXECUTING'];
 const terminals = new Set(['COMPLETED', 'COMPLETED_WITH_GAPS', 'FAILED', 'CANCELLED']);
+const waiting = new Set(['WAITING_FOR_CLARIFICATION', 'WAITING_FOR_APPROVAL', 'WAITING_FOR_HUMAN']);
+// A turn ends where the agent hands the conversation back to you.
+const handBack = new Set(['WAITING_FOR_CLARIFICATION', 'WAITING_FOR_HUMAN']);
+const cancelWords = /^\s*(cancel|stop|abort)\b/i;
+const examples = [
+  'Find three leather-goods manufacturers in Uttar Pradesh, check each is real and active, and draft the first email to each.',
+  'Source ESP32-S3 modules, a 3.3V 500mA SOT-23 LDO regulator, 10uF 0805 capacitors and USB-C connectors. 500 of each, delivered to Bengaluru within three weeks.',
+];
+const leatherWords = /leather|tanner|handbag|wallet|belt|footwear|shoe|saddle|bags?\b/i;
+const electronicsWords = /esp32|ldo|regulator|capacitor|usb|resistor|connector|module|pcb|bom|chip|ic\b|mcu|sensor/i;
+const approveWords = /^\s*(approve|approved|yes|go ahead|confirm|ok(ay)?)\b/i;
+const STEP: Record<string, string> = {
+  CREATED: 'Received your request', PARSING: 'Understanding the request', DISCOVERING: 'Finding suppliers', VERIFYING: 'Checking suppliers',
+  RESEARCHING: 'Filling information gaps', DECIDING: 'Comparing options', SCREENING: 'Compliance screen', EXECUTING: 'Preparing orders and RFQs',
+  WAITING_FOR_CLARIFICATION: 'Need a detail from you', WAITING_FOR_APPROVAL: 'Waiting for your approval', COMPLETED: 'Done',
+  COMPLETED_WITH_GAPS: 'Done, with gaps', FAILED: 'Stopped', WAITING_FOR_HUMAN: 'Need your help', CANCELLED: 'Cancelled',
+};
 
-function App() {
-  const [runs, setRuns] = useState<Run[]>([]);
-  const [run, setRun] = useState<Run | null>(null);
-  const [selected, setSelected] = useState<string | null>(() => localStorage.getItem('sourcing-run'));
-  const [tab, setTab] = useState('Plan');
-  const [ledger, setLedger] = useState<Ledger[]>([]);
-  const [reservations, setReservations] = useState<Reservation[]>([]);
-  const [category, setCategory] = useState('');
-  const [requestType, setRequestType] = useState<'purchase' | 'shortlist'>('purchase');
-  const [reviewInbox, setReviewInbox] = useState(false);
-  const [text, setText] = useState('Source 100 reusable cotton tote bags, 38 x 42 cm, with reinforced handles. Deliver to Bengaluru within three weeks. Do not substitute materials.');
-  const [destination, setDestination] = useState('Bengaluru, India');
-  const [deadline, setDeadline] = useState(() => new Date(Date.now() + 21 * 86400000).toISOString().slice(0, 10));
-  const [budget, setBudget] = useState('2000');
-  const [threshold, setThreshold] = useState('100000');
-  const [scenario, setScenario] = useState<RequestBody['scenario']>('normal');
-  const [mode, setMode] = useState<'fixture' | 'live'>('live');
-  const [supplierDomain, setSupplierDomain] = useState('');
-  const [providerBudget, setProviderBudget] = useState('5');
-  const [structured, setStructured] = useState('');
-  const [llmEnabled, setLlmEnabled] = useState(true);
-  const [answer, setAnswer] = useState('');
-  const [budgetEdit, setBudgetEdit] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [connected, setConnected] = useState(false);
-  const generation = useRef(0);
+type Health = { gemini_configured?: boolean; crustdata_configured?: boolean };
+type Entry = { kind: 'user'; text: string } | { kind: 'agent'; runId: string; segment: number } | { kind: 'note'; text: string; error?: boolean };
+type Step = { id: string; title: string; detail: string; thought?: boolean };
 
-  const refresh = useCallback(async () => {
-    const current = ++generation.current;
-    try {
-      const list = await api<Run[]>('/runs');
-      if (generation.current !== current) return;
-      setRuns(list); setConnected(true);
-      if (selected) {
-        const [r, l, b] = await Promise.all([api<Run>(`/runs/${selected}`), api<Ledger[]>(`/runs/${selected}/ledger`), api<Reservation[]>(`/runs/${selected}/reservations`)]);
-        if (generation.current !== current) return;
-        setRun(r); setLedger(l); setReservations(b);
-      }
-    } catch (e) { if (generation.current === current) { setConnected(false); setError((e as Error).message); } }
-  }, [selected]);
+const load = <T,>(key: string, fallback: T): T => { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) as T : fallback; } catch { return fallback; } };
+const save = (key: string, value: unknown) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage unavailable */ } };
 
-  useEffect(() => { void refresh(); const timer = setInterval(() => void refresh(), 1200); return () => { clearInterval(timer); generation.current++; }; }, [refresh]);
-  useEffect(() => { if (selected) localStorage.setItem('sourcing-run', selected); else localStorage.removeItem('sourcing-run'); }, [selected]);
-
-  async function action(work: () => Promise<unknown>) {
-    setBusy(true); setError('');
-    try { await work(); await refresh(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+/** Events belonging to one agent turn: a run is split at each clarification question. */
+function segmentEvents(run: Run, segment: number) {
+  const out: Run['events'] = [];
+  let current = 0;
+  for (const e of run.events) {
+    if (current === segment) out.push(e);
+    if (handBack.has(e.state)) current++;
+    if (current > segment) break;
   }
-  function pick(id: string | null) { setReviewInbox(false); generation.current++; setSelected(id); setRun(null); setLedger([]); setReservations([]); setTab('Plan'); setError(''); setAnswer(''); setBudgetEdit(''); }
-  async function create() {
-    await action(async () => {
-      const specs: Spec[] = structured.trim() ? JSON.parse(structured) : [];
-      const result = await api<Run>('/runs', 'POST', { text, category: category.trim() || 'general', request_type: requestType, human_review_enabled: true, destination,
-        deadline: new Date(`${deadline}T23:59:00+05:30`).toISOString(), research_budget_minor: Math.round(Number(budget) * 100),
-        approval_threshold_minor: Math.round(Number(threshold) * 100), mode, scenario, specs, llm_enabled: llmEnabled, ...(mode === 'live' ? { supplier_domains: supplierDomain.trim() ? [supplierDomain.trim().toLowerCase()] : [], provider_credit_limit: providerBudget } : {}) });
-      pick(result.id);
-    });
-  }
-  const pendingReviews = runs.reduce((sum, item) => sum + (item.human_reviews?.filter(review => review.status === 'pending').length ?? 0), 0);
-  const spent = ledger.filter(l => l.account === 'research').reduce((s, l) => s + l.amount_minor, 0);
-  const held = reservations.filter(r => r.status === 'reserved').reduce((s, r) => s + r.amount_minor, 0);
-  const supplierName = (id: string) => run?.suppliers.find(s => s.id === id)?.name ?? id;
-  const selectedTotal = run?.orders.reduce((s, o) => s + o.amount_minor, 0) ?? 0;
+  return out;
+}
+const segmentCount = (run: Run) => run.events.filter(e => handBack.has(e.state)).length;
 
-  return <div className="shell">
-    <aside className="sidebar">
-      <a className="brand" href="/" aria-label="Sourcing Desk home"><span className="brand-icon"><Layers3 size={23}/></span><span>Sourcing<span className="brand-light">Desk</span><small>PROCUREMENT WORKSPACE</small></span></a>
-      <div className="workspace"><span className="workspace-logo">S</span><div>Founder workspace<small>Local development</small></div><ChevronDown size={15}/></div>
-      <div className="nav-label">WORKSPACE</div>
-      <button className="nav active" onClick={() => { setReviewInbox(false); setTab('Plan'); }}><ClipboardList size={18}/>Sourcing requests<span>{runs.length}</span></button>
-      <button className="nav" disabled={!run} onClick={() => setTab('Research')}><Wallet size={18}/>Research & spending</button>
-      <button className="nav" disabled={!run} onClick={() => setTab('Orders & RFQs')}><Box size={18}/>Orders & RFQs</button>
-      <button className="nav" onClick={() => setReviewInbox(true)}>Human review inbox<span aria-live="polite">{pendingReviews}</span></button>
-      <div className="recent-title">RECENT REQUESTS <button aria-label="New request" onClick={() => pick(null)}><Plus size={16}/></button></div>
-      <div className="recent-list">{runs.slice(0, 8).map(r => <button key={r.id} className={`recent ${selected === r.id ? 'chosen' : ''}`} onClick={() => pick(r.id)}><span>{r.request.text.slice(0, 54)}</span><small>{r.state.replaceAll('_', ' ').toLowerCase()}</small></button>)}{!runs.length && <p className="muted px">Your requests will appear here.</p>}</div>
-      <div className="sidebar-foot"><ShieldCheck size={18}/><div>Simulation environment<small>Payments are always mocked.</small></div></div>
-    </aside>
-    <main>
-      <header className="topbar"><span>Workspace <span className="slash">/</span> Sourcing requests</span><span className={`connection ${connected ? '' : 'offline'}`}><span/>{connected ? 'API connected' : 'API unavailable'}</span></header>
-      <div className="content">
-        <div className="page-heading"><div><div className="eyebrow">YOUR SOURCING OPERATIONS</div><h1>{reviewInbox ? 'Human review inbox' : selected ? 'Request overview' : 'Source anything with confidence.'}</h1><p>{selected ? 'Every supplier, decision and rupee. In one place.' : 'From a buying request to a supplier plan you can inspect.'}</p></div>{selected && <button className="primary" onClick={() => pick(null)}><Plus size={17}/>New request</button>}</div>
-        <div className="environment"><ShieldCheck size={18}/><span><strong>Hackathon sandbox</strong> · Fixture or live identity evidence. Payments stay simulated and RFQs stay drafts.</span><span className="pill">LOCAL ONLY</span></div>
-        {error && <div role="alert" className="error">{error}<button onClick={() => setError('')} aria-label="Dismiss error">×</button></div>}
-        {reviewInbox ? <HumanReviewInbox runs={runs} onSelect={pick}/> : !selected ? <div className="create-layout"><section className="card request-card"><div className="section-heading"><span className="icon-tile"><Search size={19}/></span><div><h2>What do you need to source?</h2><p>Include exact specs and a quantity for each item.</p></div></div>
-          <form onSubmit={e => { e.preventDefault(); void create(); }}>
-            <div className="form-row"><label>Optional product context<input value={category} onChange={event => setCategory(event.target.value)} placeholder="Any product or service; no category required"/></label><label>Requested outcome<select value={requestType} onChange={event => setRequestType(event.target.value as typeof requestType)}><option value="purchase">Purchase plan</option><option value="shortlist">Supplier shortlist and RFQ drafts</option></select></label></div>
-            <label>Data mode<select value={mode} onChange={event => setMode(event.target.value as typeof mode)}><option value="live">Live - real Crustdata + Gemini</option><option value="fixture">Offline fixtures - limited demo catalogue</option></select></label>
-            {mode === 'live' && <section><div className="form-row"><label>Supplier domain (blank to search)<input value={supplierDomain} placeholder="supplier.example" onChange={e => setSupplierDomain(e.target.value)}/></label><label>Crustdata budget - credits<input required type="number" min="0" max="10" step="0.1" value={providerBudget} onChange={e => setProviderBudget(e.target.value)}/></label></div><p className="muted">New dashboard requests have a 5-credit cap. Leave the domain blank to search for suppliers, or enter a known domain for an identity check.</p></section>}
-            <label className="llm-option"><input type="checkbox" checked={llmEnabled} onChange={e => setLlmEnabled(e.target.checked)}/>Use Gemini to parse the request and extract supplier insights</label>
-            <p className="muted">Gemini can refine a live supplier search within your Crustdata credit cap. It uses up to four model calls per run.</p>
-            <label>Your sourcing request<textarea required rows={6} value={text} onChange={e => setText(e.target.value)}/></label>
-            <div className="form-row"><label>Delivery destination<input required value={destination} onChange={e => setDestination(e.target.value)}/></label><label>Delivery deadline · IST<input required type="date" value={deadline} onChange={e => setDeadline(e.target.value)}/></label></div>
-            <div className="form-row"><label>Research budget · INR<input required type="number" min="0" step="0.01" value={budget} onChange={e => setBudget(e.target.value)}/></label><label>Approval required above · INR<input required type="number" min="0" step="0.01" value={threshold} onChange={e => setThreshold(e.target.value)}/></label></div>
-            <details><summary>Developer options</summary><label>Fault injection (sample data only)<select value={scenario} onChange={e => setScenario(e.target.value as typeof scenario)}><option value="normal">Normal sourcing flow</option><option value="missing_stock">Missing stock · buy mock research</option><option value="provider_timeout">Provider timeout / 429 · finish with gaps</option><option value="checkout_timeout">Checkout timeout · reconcile payment</option><option value="checkout_crash">Checkout crash · restart worker to recover</option></select></label>
-            <details><summary>Structured specification editor</summary><p className="muted">Optional JSON array using the Spec contract in /docs. Unsupported fixture specifications remain unverified.</p><textarea aria-label="Structured specifications JSON" rows={5} placeholder='[{"id":"esp32","description":"ESP32-S3 module","quantity":500,"parameters":{"fixture_item":"esp32","part_number":"ESP32-S3"}}]' value={structured} onChange={e => setStructured(e.target.value)}/></details></details>
-            <div className="form-bottom"><span><ShieldCheck size={15}/>No real money moves</span><button className="primary" disabled={busy || !connected}>{busy ? <LoaderCircle size={16} className="spin"/> : <Plus size={16}/>}Create sourcing request</button></div>
-          </form></section><aside className="guide"><span className="pill green">HOW IT WORKS</span><h2>A clear path from<br/>request to result.</h2>{[['01','Understand the spec','Resolve ambiguity before comparing parts.'],['02','Verify suppliers','Check identity and category trust signals.'],['03','Make the decision','Compare eligible landed costs in plain code.'],['04','Finish the work','Mock checkout or an RFQ ready for review.']].map(([n,title,desc]) => <div className="guide-step" key={n}><span>{n}</span><div><h3>{title}</h3><p>{desc}</p></div></div>)}<div className="guide-note"><CircleHelp size={19}/><p>The worker runs separately. Requests wait safely in SQLite until it is running.</p></div></aside></div> : !run ? <div className="card empty"><LoaderCircle className="spin"/><p>Loading persisted request…</p></div> : <>
-          <div className="stats"><Stat label="ORDER PLAN" value={money(selectedTotal)} sub="Estimated landed total · demo tax rates" icon={<Box size={19}/>}/><Stat label="RESEARCH SPEND" value={money(spent)} sub={`${money(held)} reserved · ${money(run.request.research_budget_minor)} ceiling`} icon={<Wallet size={19}/>}/><Stat label="SUPPLIERS CHECKED" value={String(run.suppliers.length).padStart(2, '0')} sub="Canonical identities · aliases merged" icon={<ShieldCheck size={19}/>}/><Stat label="WORKFLOW STATUS" value={run.state.replaceAll('_', ' ')} sub={run.request.mode === 'fixture' ? 'Fixture data · simulated execution' : `Live Crustdata - ${run.request.provider_credit_limit} credit cap`} icon={<Activity size={19}/>}/></div>
-          <section className="card progress-card"><div className="spread"><h2>{run.request.request_type === 'purchase' ? 'Purchase request' : 'Supplier shortlist request'}</h2><span className="pill">{run.id.slice(0,8)}</span></div><p className="request-text">{run.request.text}</p><div className="stages">{stageNames.map((s,i) => { const visited = run.events.some(e => e.state === s); return <div key={s} className={visited ? 'visited' : ''}><span>{visited ? <Check size={14}/> : i+1}</span>{s.toLowerCase()}</div>; })}</div><small className="muted">Created {date(run.created_at)} · Worker advances one persisted step per poll. {run.state === 'WAITING_FOR_HUMAN' ? 'Paused for a human reviewer; no further provider calls until resolved.' : terminals.has(run.state) ? 'Run finished.' : 'Waiting states pause the worker until the requested input is supplied.'}</small></section>
-          {run.state === 'WAITING_FOR_CLARIFICATION' && <section className="card attention"><h2>One detail before we continue</h2><p>{run.clarification?.question}</p><form onSubmit={e => { e.preventDefault(); void action(() => api(`/runs/${run.id}/clarifications`, 'POST', { answer, ...(structured.trim() ? { specs: JSON.parse(structured) } : {}) })); }}><label>Your answer<input required value={answer} onChange={e => setAnswer(e.target.value)} placeholder="e.g. 500 of each"/></label><details><summary>Provide structured specs instead</summary><textarea aria-label="Clarified specifications JSON" rows={5} value={structured} onChange={e => setStructured(e.target.value)}/></details><button className="primary" disabled={busy}>Save and continue</button></form></section>}
-          {run.error && <div className="error" role="alert">{run.error}{run.state === 'FAILED' && run.request_interpretation && /GEMINI_(SCHEMA_INVALID|OUTPUT_TRUNCATED|INVALID_OR_BLOCKED_OUTPUT)/.test(run.error) && <div><p>Your previously validated requirements are saved. Restore them without another model call.</p><button className="secondary" disabled={busy} onClick={() => void action(() => api(`/runs/${run.id}/resume`, 'POST'))}>Restore saved requirements</button></div>}</div>}
-          <HumanReviewPanel key={run.id + (run.human_reviews?.find(review => review.status === 'pending')?.id ?? '')} run={run} busy={busy} onQuoteSaved={setRun} onResolve={async (taskId, resolution) => { await action(() => api(`/runs/${run.id}/human-reviews/${taskId}/resolve`, 'POST', resolution)); }}/>
-          {!['COMPLETED', 'CANCELLED', 'WAITING_FOR_HUMAN'].includes(run.state) && <button className="secondary" disabled={busy} onClick={() => void action(() => api(`/runs/${run.id}/human-review`, 'POST', { note: 'Founder requested human procurement assistance for this request.' }))}>Request human assistance</button>}
-          {(tab === 'Orders & RFQs' || run.human_reviews.some(task => task.status === 'pending' && task.reason_code === 'PAYMENT_INSUFFICIENT_FUNDS')) && <SyntheticWallet revision={run.id + ':' + run.events.length + ':' + run.orders.map(order => order.state).join(',')}/>}
-          <LLMInsights run={run}/>
-          <div className="tabs" role="tablist" aria-label="Request details">{['Plan', 'Research', 'Orders & RFQs', 'Activity'].map(t => <button role="tab" aria-selected={tab === t} key={t} onClick={() => setTab(t)}>{t}{t === 'Orders & RFQs' && <span>{run.orders.length + run.rfqs.length}</span>}</button>)}</div>
-          {tab === 'Plan' && <section><TrustCards run={run}/>{!run.decisions.length ? <Empty title="Your plan is taking shape" text="Supplier comparisons appear after verification and research finish."/> : run.decisions.map(d => <section className="card decision" key={d.spec_id}><div className="spread"><h2>{run.specs.find(s => s.id === d.spec_id)?.description}</h2><span className={`pill ${['selected', 'handled_by_human'].includes(d.outcome) ? 'green' : 'amber'}`}>{d.outcome.replaceAll('_',' ')}</span></div><p>{d.explanation}</p>{d.alternatives.map(a => <p className="muted" key={a}>{a}</p>)}<div className="table-scroll"><table><thead><tr><th>Supplier</th><th>Reliability</th><th>Landed cost</th><th>Decision</th></tr></thead><tbody>{d.candidates.map(c => <tr key={c.quote_id}><td><strong>{supplierName(c.supplier_id)}</strong><small>{run.suppliers.find(s => s.id === c.supplier_id)?.kind} · {run.request.mode}</small></td><td><strong>{c.reliability}/100</strong><small>{c.coverage}% evidence coverage</small><details><summary>Score breakdown</summary>{Object.entries(c.reliability_breakdown).map(([k,v]) => <small key={k}>{k}: {v}</small>)}</details></td><td>{c.cost ? <><strong>{money(c.cost.total_minor)}</strong><details><summary>Cost breakdown</summary>{c.cost.goods_minor !== null && <small>Goods {money(c.cost.goods_minor)}</small>}{c.cost.shipping_minor !== null && <small>Shipping {money(c.cost.shipping_minor)}</small>}{c.cost.duty_minor !== null && <small>Duty {money(c.cost.duty_minor)}</small>}{c.cost.tax_minor !== null && <small>Tax {money(c.cost.tax_minor)}</small>}<small>{c.cost.assumptions}</small></details></> : <span className="muted">{run.request.request_type === 'shortlist' ? 'RFQ required' : 'Incomplete'}</span>}</td><td>{(d.selected_quote_id === c.quote_id || (d.selected_quote_id == null && c.eligible && d.selected_supplier_ids.includes(c.supplier_id))) ? <span className="selected"><Check size={14}/>Selected</span> : <span className="muted">{c.eligible ? 'Eligible alternative' : 'Ineligible'}</span>}<small className="reason">{c.reason_codes.join(' · ').toLowerCase().replaceAll('_',' ')}</small><details><summary>Sources & timestamps</summary>{c.evidence_ids.map(id => { const e=run.evidence.find(x => x.id === id); return e && <div className="evidence" key={id}><strong>{e.provider} · {e.mode}</strong><small>{e.status} · {e.mode} · {date(e.observed_at)}</small><code>{e.reference}</code><p>{e.fact}: {e.value}</p></div>; })}</details></td></tr>)}</tbody></table></div></section>)}</section>}
-          {tab === 'Research' && run.request.mode === 'live' && <CreditLedger run={run} busy={busy} onLower={v => void action(() => api(`/runs/${run.id}/budget`, 'PATCH', { provider_credit_limit: v }))}/>}
-          {tab === 'Research' && <section className="card"><div className="spread"><div><h2>Research & budget</h2><p>Only purchase data that could change a decision.</p></div><span className="pill">MOCK WALLET</span></div><form className="budget-form" onSubmit={e => { e.preventDefault(); void action(() => api(`/runs/${run.id}/budget`, 'PATCH', { research_budget_minor: Math.round(Number(budgetEdit) * 100) })); }}><label>New research ceiling · INR<input required type="number" min="0" step="0.01" value={budgetEdit} placeholder={String(run.request.research_budget_minor/100)} onChange={e => setBudgetEdit(e.target.value)}/></label><button className="secondary" disabled={busy}>Update ceiling</button></form><p className="muted">Spent {money(spent)} · Reserved {money(held)} · Remaining {money(Math.max(0,run.request.research_budget_minor-spent-held))}. A reduction cannot reverse committed spending.</p>{run.research.length ? run.research.map(p => <div className="research-entry" key={p.id}><div className="spread"><h3>{p.question}</h3><span className="pill">{p.status} · {money(p.quoted_minor)}</span></div><p>{p.rationale}</p><small>Decision changed: {p.changed_decision === null || p.changed_decision === undefined ? 'not yet evaluated' : p.changed_decision ? 'yes' : 'no'}</small></div>) : <p className="muted">No research purchase proposals yet.</p>}<ProviderUsage run={run}/><h3 className="ledger-title">Settled ledger</h3>{ledger.length ? ledger.map(l => <div className="ledger-row" key={l.id}><div>{l.description}<small>{l.account} · {date(l.created_at)}</small></div><strong>{money(l.amount_minor)}</strong></div>) : <p className="muted">No money has been committed.</p>}</section>}
-          {tab === 'Orders & RFQs' && <section className="card"><div className="spread"><h2>Orders & RFQ drafts</h2><span className="pill">SIMULATED</span></div>{!run.orders.length && !run.rfqs.length && <p className="muted">Orders or drafts appear after a plan is selected.</p>}{run.orders.map(o => <div className="order-entry" key={o.id}><div className="spread"><div><h3>{supplierName(o.supplier_id)}</h3><p>{run.specs.find(s => s.id === o.spec_id)?.description}</p></div><strong>{money(o.amount_minor)}</strong></div><div className="spread"><span className={`pill ${o.state === 'PAID' ? 'green' : 'amber'}`}>{o.state} · mock</span>{o.state === 'PLANNED' && <button className="primary" disabled={busy} onClick={() => void action(() => api(`/runs/${run.id}/approvals`, 'POST', { plan_version: o.plan_version, order_id: o.id, amount_minor: o.amount_minor }))}>Approve {money(o.amount_minor)}</button>}</div><details><summary>Payment reference</summary><code>Idempotency key: {o.idempotency_key}</code><small>Plan version: {o.plan_version}</small><small>Mock payment: {o.payment_id ?? 'not settled'}</small></details>{o.state !== 'PLANNED' && o.state !== 'FAILED' && <PayoutPreview runId={run.id} orderId={o.id}/>}</div>)}{run.rfqs.map(r => <div className="order-entry" key={r.id}><div className="spread"><h3>{supplierName(r.supplier_id)}</h3><span className="pill">DRAFT · UNSENT</span></div>{(() => { const c = (run.suppliers.find(s => s.id === r.supplier_id)?.profile as Record<string, any> | undefined)?.compliance; return c?.verdict === 'hold' ? <p className="hold-note"><strong>Held for your review before sending:</strong> {(c.reasons as string[]).join(' · ')}</p> : c?.verdict === 'approve' ? <p className="approve-note">Compliance screen passed</p> : null; })()}{r.recipient && <p className="muted">To: {r.recipient}</p>}<h4>{r.subject}</h4><p className="rfq-body">{r.body}</p></div>)}<button className="secondary" disabled={busy} onClick={() => void action(() => api(`/runs/${run.id}/resume`, 'POST'))}>Resume / reconcile saved work</button></section>}
-          {tab === 'Activity' && <section className="card"><h2>Persisted activity</h2><div className="timeline">{run.events.map(e => <div className="timeline-entry" key={e.id}><span className="timeline-dot"/><div><strong>{e.state.replaceAll('_',' ')}</strong><p>{e.message}</p><small>{date(e.time)}</small></div></div>)}</div></section>}
-        </>}
-        <footer><span>Sourcing Desk</span><span>Evidence before decisions. Human input for exceptions.</span><a href="http://127.0.0.1:8000/docs" target="_blank" rel="noreferrer">API reference</a></footer>
-      </div>
-    </main>
+function humanize(run: Run, e: Run['events'][number]) {
+  const m = e.message;
+  if (e.state === 'CREATED') return run.request.mode === 'live' ? 'Using live company data from Crustdata.' : 'Using sample supplier data for this demo.';
+  if (m.startsWith('Gemini request parsing enabled')) return 'Reading your request with Gemini.';
+  if (m.startsWith('Reading the request with the bounded')) return 'Reading your request.';
+  if (m.startsWith('Clarification saved')) return 'Got your answer. Reading the request again.';
+  return m.replace(/^Specifications saved; finding (fixture|live) suppliers\./, (_, mode) => mode === 'live' ? 'Requirements are clear. Searching live company data.' : 'Requirements are clear. Searching sample suppliers.');
+}
+
+function stepsFor(run: Run, events: Run['events']): Step[] {
+  const steps: Step[] = [];
+  const name = (id: string) => run.suppliers.find(s => s.id === id)?.name ?? id;
+  let understood = false, insights = false;
+  for (const e of events) {
+    if (handBack.has(e.state)) continue;
+    if (!understood && e.state === 'DISCOVERING' && run.request_interpretation?.summary) {
+      understood = true;
+      steps.push({ id: e.id + ':u', title: 'What I understood', detail: String(run.request_interpretation.summary), thought: true });
+    }
+    steps.push({ id: e.id, title: STEP[e.state] ?? e.state, detail: humanize(run, e) });
+    if (!insights && e.message.startsWith('Gemini provider evidence extraction') && run.supplier_insights.length) {
+      insights = true;
+      for (const [i, s] of run.supplier_insights.entries())
+        steps.push({ id: `${e.id}:i${i}`, title: `Notes on ${name(String(s.supplier_id ?? ''))}`, detail: String(s.summary ?? ''), thought: true });
+    }
+  }
+  return steps;
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [done, setDone] = useState(false);
+  return <button className="icon-btn" aria-label="Copy" onClick={() => { void navigator.clipboard?.writeText(text).then(() => { setDone(true); setTimeout(() => setDone(false), 1500); }); }}>{done ? <Check size={14}/> : <Copy size={14}/>}</button>;
+}
+
+function Thinking({ steps, live, seconds }: { steps: Step[]; live: boolean; seconds: number }) {
+  const [open, setOpen] = useState<boolean | null>(null);
+  const expanded = open ?? live;
+  const current = steps[steps.length - 1];
+  return <div className="thinking">
+    <button className="thinking-head" onClick={() => setOpen(!expanded)}>
+      {live ? <LoaderCircle size={15} className="spin"/> : <Sparkles size={15}/>}
+      <span className={live ? 'shimmer' : ''}>{live ? (current?.title ?? 'Starting') + '…' : `Worked through ${steps.length} step${steps.length === 1 ? '' : 's'}${seconds ? ` in ${seconds}s` : ''}`}</span>
+      {expanded ? <ChevronDown size={15}/> : <ChevronRight size={15}/>}
+    </button>
+    {expanded && <ol className="trace">{steps.map((s, i) => <li key={s.id} className={s.thought ? 'thought' : ''}>
+      <span className="dot">{live && i === steps.length - 1 ? <LoaderCircle size={11} className="spin"/> : null}</span>
+      <div><strong>{s.title}</strong><p>{s.detail}</p></div></li>)}</ol>}
   </div>;
 }
 
-function Stat({label,value,sub,icon}: {label:string;value:string;sub:string;icon:React.ReactNode}) { return <section className="card stat"><div>{label}{icon}</div><strong>{value}</strong><p>{sub}</p></section>; }
-function Empty({title,text}: {title:string;text:string}) { return <div className="card empty"><FileText size={28}/><h2>{title}</h2><p>{text}</p></div>; }
+const CHECK_NAMES: Record<string, string> = {
+  identity: 'Real company', location: 'In the requested region', factory: 'Factory, not a trader', stable: 'Established and stable',
+  complaints_clear: 'No complaints or bad news', authorized: 'Authorized distributor', profile: 'Company profile', compliance: 'Compliance screen',
+};
+const PLAIN_BLOCKERS: Record<string, string> = {
+  NO_ELIGIBLE_SUPPLIER_OR_INSUFFICIENT_SHORTLIST: 'No supplier passed the checks, or too few for a shortlist.',
+  PROVIDER_UNAVAILABLE: 'A data provider could not be reached within the budget.',
+  MODEL_RESPONSE_INVALID: "Gemini's answer could not be validated.",
+  PAYMENT_INSUFFICIENT_FUNDS: 'The simulated wallet does not have enough funds.',
+};
+const checkName = (kind: string) => CHECK_NAMES[kind] ?? kind.replaceAll('_', ' ').replace(/^./, c => c.toUpperCase());
+const isUrl = (v: string) => /^https?:\/\//.test(v);
+
+function Result({ result }: { result: string }) {
+  if (result === 'pass') return <span className="chip ok"><Check size={12}/>Passed</span>;
+  if (result === 'fail') return <span className="chip bad"><X size={12}/>Failed</span>;
+  if (result === 'not_applicable') return <span className="chip unknown">Not needed</span>;
+  return <span className="chip unknown"><CircleHelp size={12}/>Not confirmed</span>;
+}
+
+/** Every supplier with its checks, the evidence behind each check, and Gemini's notes. */
+function EvidencePanel({ run }: { run: Run }) {
+  const selected = new Set(run.decisions.flatMap(d => d.selected_supplier_ids));
+  const suppliers = [...run.suppliers].sort((a, b) => Number(selected.has(b.id)) - Number(selected.has(a.id)));
+  const evidence = (id: string) => run.evidence.find(e => e.id === id);
+  if (!suppliers.length) return <p className="muted">No suppliers were found, so there is no evidence to show.</p>;
+  return <div className="evidence-panel">
+    {run.suppliers.some(s => s.profile && Object.keys(s.profile).length) && <TrustCards run={run}/>}
+    {suppliers.map(s => {
+      const checks = run.checks.filter(c => c.supplier_id === s.id);
+      const insight = run.supplier_insights.find(i => String(i.supplier_id ?? '') === s.id);
+      const used = new Set(checks.flatMap(c => c.evidence_ids));
+      const other = run.evidence.filter(e => !used.has(e.id) && (e.reference.includes(s.id) || e.reference.includes(s.domain) || run.quotes.some(q => q.supplier_id === s.id && e.reference.includes(q.id))));
+      return <section className="ev-supplier" key={s.id}>
+        <div className="ev-head"><strong>{s.name}</strong>{selected.has(s.id) ? <span className="tag green">selected</span> : <span className="tag">not selected</span>}</div>
+        <p className="ev-meta">{[s.kind, s.domain, s.locations.join(', '), s.identity === 'resolved' ? 'identity resolved' : 'identity unverified'].filter(Boolean).join(' · ')}</p>
+        {insight?.summary ? <p className="ev-insight"><Sparkles size={12}/> {String(insight.summary)}</p> : null}
+        {checks.length ? <ul className="ev-checks">{checks.map((c, i) => <li key={i}>
+          <div className="ev-check"><span>{checkName(c.kind)}</span><Result result={c.result}/></div>
+          {c.reason && <small>{c.reason}</small>}
+          {c.evidence_ids.map(id => { const e = evidence(id); return e && <div className="ev-item" key={id}>
+            <span className="ev-src">{e.provider.replaceAll('_', ' ')} · {e.mode === 'live' ? 'live' : 'sample'} · {e.status} · {new Date(e.observed_at).toLocaleDateString('en-IN', { dateStyle: 'medium' })}</span>
+            <span>{e.fact}: <strong>{e.value}</strong></span>
+            {isUrl(e.reference) ? <a href={e.reference} target="_blank" rel="noreferrer">{e.reference} <ExternalLink size={11}/></a> : <code>{e.reference}</code>}
+          </div>; })}
+        </li>)}</ul> : <p className="muted">No checks were recorded for this supplier.</p>}
+        {other.length > 0 && <details className="fold"><summary>Other evidence ({other.length})</summary>{other.map(e => <div className="ev-item" key={e.id}><span className="ev-src">{e.provider.replaceAll('_', ' ')} · {e.status}</span><span>{e.fact}: <strong>{e.value}</strong></span></div>)}</details>}
+      </section>;
+    })}
+  </div>;
+}
+
+function Answer({ run }: { run: Run }) {
+  const name = (id: string) => run.suppliers.find(s => s.id === id)?.name ?? id;
+  const spec = (id: string) => run.specs.find(s => s.id === id)?.description ?? id;
+  if (run.state === 'CANCELLED') return <div className="answer"><p>Okay, I've stopped this request. Nothing was sent or paid.</p></div>;
+  if (run.state === 'FAILED') return <div className="answer"><p className="bad"><CircleAlert size={15}/> I couldn't finish this request.</p><p>{run.error}</p></div>;
+  const decision = run.decisions[0];
+  const credits = (run.provider_usage as Record<string, unknown>[]).reduce((t, r) => t + Number(r.charged ?? r.reserved ?? 0), 0);
+  const planned = run.orders.filter(o => o.state === 'PLANNED');
+  return <div className="answer">
+    {run.request.request_type === 'shortlist' ? <>
+      {decision?.selected_supplier_ids.length ? <>
+        <p>I shortlisted <strong>{decision.selected_supplier_ids.length}</strong> of the {run.suppliers.length} companies I found{run.rfqs.length ? ' and drafted a first email to each' : ''}:</p>
+        <ul>{decision.selected_supplier_ids.map(id => { const c = (run.suppliers.find(s => s.id === id)?.profile as Record<string, any> | undefined)?.compliance; return <li key={id}><strong>{name(id)}</strong>{c?.verdict === 'hold' ? <span className="tag amber">held for review</span> : c?.verdict === 'approve' ? <span className="tag green">compliance passed</span> : null}{c?.verdict === 'hold' && <small>{(c.reasons as string[]).join(' · ')}</small>}</li>; })}</ul>
+      </> : <p>{decision?.explanation ?? 'I could not build a shortlist from the evidence I found.'}</p>}
+      {decision && decision.candidates.some(c => !decision.selected_supplier_ids.includes(c.supplier_id)) && <details className="fold"><summary>Why the others were left out</summary><ul>{decision.candidates.filter(c => !decision.selected_supplier_ids.includes(c.supplier_id)).map(c => <li key={c.quote_id}><strong>{name(c.supplier_id)}</strong>: {plain(c.reason_codes).join(', ') || 'lower ranked'}</li>)}</ul></details>}
+      {run.rfqs.map(r => <div className="rfq" key={r.id}><div className="rfq-head"><Mail size={14}/><span>{name(r.supplier_id)}{r.recipient ? ` · ${r.recipient}` : ''}</span><span className="tag">draft, not sent</span><CopyButton text={`Subject: ${r.subject}\n\n${r.body}`}/></div><strong>{r.subject}</strong><p className="rfq-body">{r.body}</p></div>)}
+    </> : <>
+      {run.decisions.length ? <><p>Here's the plan for each item:</p><ul>{run.decisions.map(d => { const best = d.candidates.find(c => d.selected_supplier_ids.includes(c.supplier_id)); return <li key={d.spec_id}><strong>{spec(d.spec_id)}</strong>: {best ? <>{name(best.supplier_id)}{best.cost ? `, ${money(best.cost.total_minor)} landed` : ''}</> : <span className="muted">{d.explanation}</span>}</li>; })}</ul></> : <p>I couldn't put together a plan for this request.</p>}
+      {run.orders.length > 0 && <p>Orders (simulated payments): {run.orders.map(o => `${name(o.supplier_id)} ${money(o.amount_minor)} ${o.state.toLowerCase()}`).join(' · ')}. Total {money(run.orders.reduce((s, o) => s + o.amount_minor, 0))}.</p>}
+    </>}
+    {run.state === 'WAITING_FOR_APPROVAL' && planned.length > 0 && <p className="ask">{planned.length === 1 ? 'This order is' : 'These orders are'} above your approval limit ({planned.map(o => `${name(o.supplier_id)} ${money(o.amount_minor)}`).join(', ')}). Reply <strong>approve</strong> to place {planned.length === 1 ? 'it' : 'them'}. Payment is simulated.</p>}
+    {run.state === 'COMPLETED_WITH_GAPS' && <p className="muted">Some facts couldn't be confirmed, so the result has gaps. The steps above show where.</p>}
+    {run.request.mode === 'live' && <p className="muted">Spent {credits.toFixed(2)} of {String(run.request.provider_credit_limit)} Crustdata credits.</p>}
+    {run.suppliers.length > 0 && <details className="fold"><summary>Supplier checks and evidence ({run.suppliers.length} supplier{run.suppliers.length === 1 ? '' : 's'}, {run.checks.length} checks)</summary><EvidencePanel run={run}/></details>}
+  </div>;
+}
+
+function AgentTurn({ run, segment }: { run: Run | undefined; segment: number }) {
+  if (!run) return <div className="msg agent"><div className="avatar"><Layers3 size={15}/></div><div className="body"><div className="thinking"><span className="thinking-head"><LoaderCircle size={15} className="spin"/><span className="shimmer">Starting…</span></span></div></div></div>;
+  const events = segmentEvents(run, segment);
+  const askedHere = events.some(e => handBack.has(e.state));
+  const isLast = segment === segmentCount(run);
+  const finished = askedHere || (isLast && (terminals.has(run.state) || waiting.has(run.state)));
+  const seconds = events.length > 1 ? Math.round((new Date(events[events.length - 1].time).getTime() - new Date(events[0].time).getTime()) / 1000) : 0;
+  const stop = events.find(e => handBack.has(e.state));
+  const task = stop?.state === 'WAITING_FOR_HUMAN' ? [...run.human_reviews].reverse().find(t => new Date(t.created_at).getTime() <= new Date(stop.time).getTime() + 2000) : undefined;
+  return <div className="msg agent"><div className="avatar"><Layers3 size={15}/></div><div className="body">
+    <Thinking steps={stepsFor(run, events)} live={!finished} seconds={seconds}/>
+    {askedHere ? (task ? <div className="answer"><p>I'm stuck and need your help: {task.summary}</p>{task.blockers.length > 0 && <ul>{task.blockers.map((b, i) => <li key={i}><small>{/^[A-Z0-9_]+$/.test(b) ? (PLAIN_BLOCKERS[b] ?? plain([b])[0]) : b}</small></li>)}</ul>}
+      {run.request.mode === 'fixture' && <p className="muted">This desk is running on sample suppliers (no live Crustdata key), so only requests like the two examples on the home page have suppliers to find.</p>}<p className="muted">Reply with more detail (exact items, specs, quantities, a supplier website) and I'll try again, or say "cancel" to stop.</p></div>
+      : <div className="answer"><p>{stop?.message}</p><p className="muted">Reply below and I'll pick up from here.</p></div>) : finished ? <Answer run={run}/> : null}
+  </div></div>;
+}
+
+function App() {
+  const [thread, setThread] = useState<Entry[]>(() => load('sourcing-thread', []));
+  const [runs, setRuns] = useState<Record<string, Run>>({});
+  const [missing, setMissing] = useState<Set<string>>(new Set());
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [locked, setLocked] = useState(false);
+  const [passcode, setPasscode] = useState('');
+  const [health, setHealth] = useState<Health>({});
+  const endRef = useRef<HTMLDivElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+  const stick = useRef(true);
+
+  useEffect(() => { fetch('/api/health').then(r => r.json()).then(setHealth).catch(() => {}); }, []);
+  useEffect(() => save('sourcing-thread', thread), [thread]);
+
+  const runIds = [...new Set(thread.flatMap(e => e.kind === 'agent' ? [e.runId] : []))];
+  const lastRunId = runIds[runIds.length - 1];
+  const lastRun = lastRunId ? runs[lastRunId] : undefined;
+
+  const refresh = useCallback(async (all = false) => {
+    try {
+      const ids = (all ? runIds : runIds.filter(id => !runs[id] || !terminals.has(runs[id].state))).filter(id => !missing.has(id));
+      if (!ids.length) { if (!thread.length) await api('/access'); setLocked(false); return; }
+      const gone: string[] = [];
+      const fetched = await Promise.all(ids.map(id => api<Run>(`/runs/${id}`).catch(e => { if (e instanceof AccessDenied) throw e; if (/not found|validation error/i.test((e as Error).message)) gone.push(id); return null; })));
+      if (gone.length) setMissing(m => new Set([...m, ...gone]));
+      setRuns(prev => { const next = { ...prev }; for (const r of fetched) if (r) next[r.id] = r; return next; });
+      setLocked(false);
+    } catch (e) { if (e instanceof AccessDenied) setLocked(true); else setError((e as Error).message); }
+  }, [runIds.join(','), runs, thread.length, missing]);
+
+  useEffect(() => { void refresh(true); }, [locked]);
+  const active = runIds.some(id => !missing.has(id) && (!runs[id] || !(terminals.has(runs[id].state) || waiting.has(runs[id].state))));
+  useEffect(() => { if (!active) return; const t = setInterval(() => void refresh(), 1000); return () => clearInterval(t); }, [active, refresh]);
+
+  // Follow the conversation unless the reader has scrolled up to read something.
+  useEffect(() => { if (stick.current) endRef.current?.scrollIntoView({ block: 'end' }); }, [thread, runs]);
+
+  async function send() {
+    const message = text.trim();
+    if (!message || busy) return;
+    setBusy(true); setError(''); setText(''); stick.current = true;
+    const add = (...entries: Entry[]) => setThread(t => [...t, ...entries]);
+    try {
+      if (lastRun?.state === 'WAITING_FOR_CLARIFICATION') {
+        add({ kind: 'user', text: message });
+        const r = await api<Run>(`/runs/${lastRun.id}/clarifications`, 'POST', { answer: message });
+        setRuns(p => ({ ...p, [r.id]: r }));
+        add({ kind: 'agent', runId: r.id, segment: segmentCount(r) });
+      } else if (lastRun?.state === 'WAITING_FOR_HUMAN') {
+        add({ kind: 'user', text: message });
+        const task = lastRun.human_reviews.find(t => t.status === 'pending');
+        if (!task) throw new Error('There is no open question on this request. Start a new request instead.');
+        const cancel = cancelWords.test(message);
+        const original = lastRun.request.text;
+        const r = await api<Run>(`/runs/${lastRun.id}/human-reviews/${task.id}/resolve`, 'POST', cancel
+          ? { reviewer: 'chat user', action: 'cancel', note: `Cancelled from chat: ${message}`.slice(0, 4000) }
+          : { reviewer: 'chat user', action: 'retry', note: `More detail from chat: ${message}`.slice(0, 4000), request_text: `${original}\nMore detail: ${message}`.slice(0, 10000) });
+        setRuns(p => ({ ...p, [r.id]: r }));
+        add({ kind: 'agent', runId: r.id, segment: segmentCount(r) });
+      } else if (lastRun?.state === 'WAITING_FOR_APPROVAL' && approveWords.test(message)) {
+        add({ kind: 'user', text: message });
+        let r = lastRun;
+        for (const o of lastRun.orders.filter(o => o.state === 'PLANNED'))
+          r = await api<Run>(`/runs/${lastRun.id}/approvals`, 'POST', { plan_version: o.plan_version, order_id: o.id, amount_minor: o.amount_minor });
+        setRuns(p => ({ ...p, [r.id]: r }));
+        add({ kind: 'note', text: 'Approved. Placing the simulated order…' });
+      } else {
+        add({ kind: 'user', text: message });
+        const previous = lastRun?.request;
+        const standalone = leatherWords.test(message) || electronicsWords.test(message) || !previous;
+        const leather = standalone ? leatherWords.test(message) : previous!.category === 'leather_goods';
+        const electronics = !leather && (standalone ? electronicsWords.test(message) : previous!.category === 'electronics');
+        const original = previous ? previous.text.split(/\n(?:Clarification|More detail):/)[0] : '';
+        const requestText = standalone ? message : `${message}\n\nEarlier in this conversation I asked: ${original}`;
+        const mode = health.crustdata_configured ? 'live' : 'fixture';
+        const r = await api<Run>('/runs', 'POST', { text: requestText, category: leather ? 'leather_goods' : electronics ? 'electronics' : 'general', request_type: leather ? 'shortlist' : 'purchase',
+          destination: leather ? 'Uttar Pradesh, India' : 'Bengaluru, India', deadline: new Date(Date.now() + 21 * 86400000).toISOString(),
+          research_budget_minor: 200000, approval_threshold_minor: 100000000, mode, scenario: 'normal', specs: [], llm_enabled: !!health.gemini_configured, provider_credit_limit: 5 });
+        setRuns(p => ({ ...p, [r.id]: r }));
+        add({ kind: 'agent', runId: r.id, segment: 0 });
+      }
+    } catch (e) {
+      if (e instanceof AccessDenied) setLocked(true);
+      else add({ kind: 'note', text: (e as Error).message, error: true });
+    } finally { setBusy(false); }
+  }
+
+  if (locked) return <div className="gate"><form className="card gate-card" onSubmit={e => { e.preventDefault(); setAccessCode(passcode.trim()); setPasscode(''); setLocked(false); }}>
+    <span className="brand-icon"><Layers3 size={23}/></span><h1>Sourcing Desk</h1><p className="muted">Enter the team passcode to continue.</p>
+    <label>Passcode<input autoFocus required type="password" autoComplete="current-password" value={passcode} onChange={e => setPasscode(e.target.value)}/></label>
+    <button className="primary">Unlock</button></form></div>;
+
+  const placeholder = lastRun?.state === 'WAITING_FOR_CLARIFICATION' ? 'Answer the question above…'
+    : lastRun?.state === 'WAITING_FOR_HUMAN' ? 'Add the missing detail, or say "cancel"…'
+    : lastRun?.state === 'WAITING_FOR_APPROVAL' ? 'Reply "approve", or ask something else…'
+    : thread.length ? 'Ask a follow-up or start a new request…' : 'What do you need to source? Include specs, quantities and where it should go.';
+  const prompt = <form className="prompt" onSubmit={e => { e.preventDefault(); void send(); }}>
+    <textarea aria-label="Message" rows={thread.length ? 1 : 4} value={text} placeholder={placeholder} autoFocus
+      onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); } }}/>
+    <button className="send" aria-label="Send" disabled={busy || !text.trim()}>{busy ? <LoaderCircle size={18} className="spin"/> : <ArrowUp size={18}/>}</button>
+  </form>;
+
+  if (!thread.length) return <div className="home">
+    <div className="home-inner">
+      <div className="home-brand"><span className="brand-icon"><Layers3 size={22}/></span>Sourcing Desk</div>
+      <h1>What do you need to source?</h1>
+      {prompt}
+      {error && <div role="alert" className="error">{error}</div>}
+      <div className="examples">{examples.map(x => <button key={x} type="button" onClick={() => setText(x)}>{x}</button>)}</div>
+      <p className="muted center"><ShieldCheck size={13}/> Payments are simulated and RFQs stay drafts. Nothing is sent to suppliers.</p>
+    </div>
+  </div>;
+
+  return <div className="chat">
+    <header className="chat-top"><span className="home-brand"><span className="brand-icon"><Layers3 size={16}/></span>Sourcing Desk</span>
+      <button className="secondary" onClick={() => { setThread([]); setRuns({}); setMissing(new Set()); setText(''); }}><Plus size={15}/>New chat</button></header>
+    <div className="chat-scroll" ref={scroller} onScroll={e => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}>
+      <div className="chat-col">
+        {thread.map((e, i) => e.kind === 'user' ? <div className="msg user" key={i}><div className="bubble">{e.text}</div></div>
+          : e.kind === 'note' ? <div className={`note ${e.error ? 'bad' : ''}`} key={i}>{e.error && <CircleAlert size={14}/>}{e.text}</div>
+          : missing.has(e.runId) ? <div className="note" key={i}>This reply is no longer available on the server. Start a new chat to continue.</div>
+          : <AgentTurn key={i} run={runs[e.runId]} segment={e.segment}/>)}
+        {error && <div className="note bad"><CircleAlert size={14}/>{error}</div>}
+        <div ref={endRef}/>
+      </div>
+    </div>
+    <div className="composer"><div className="chat-col">{prompt}<p className="fine">Payments are simulated and RFQs stay drafts. Nothing is sent to suppliers.</p></div></div>
+  </div>;
+}
 
 createRoot(document.getElementById('root')!).render(<StrictMode><App/></StrictMode>);

@@ -102,6 +102,13 @@ class Orchestrator:
         elif run.state == S.PARSING:
             if run.request.llm_enabled and not (run.request.specs and run.request_interpretation):
                 run.specs, question = self.llm().parse(run)
+                # Sample suppliers are keyed by the reference items: in fixture mode, when the
+                # bounded parser fully recognizes the request, its specs drive discovery and no
+                # extra question is asked. Gemini's interpretation stays saved for the trace.
+                if run.request.mode == "fixture":
+                    fixture_specs, fixture_question = FixtureParser().parse(run.request)
+                    if fixture_specs and not fixture_question:
+                        run.specs, question = fixture_specs, None
             else:
                 run.specs, question = FixtureParser().parse(run.request)
             if question:

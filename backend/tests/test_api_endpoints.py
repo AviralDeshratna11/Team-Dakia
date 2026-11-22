@@ -18,6 +18,7 @@ def test_every_api_route_in_sourcing_and_checkout_workflow(system):
     schema = api.get("/openapi.json").json()
     assert api.get("/docs").status_code == 200 and api.get("/redoc").status_code == 200
     assert call("GET", "/api/health")["payments"] == "mock"
+    assert call("GET", "/api/access") == {"ok": True}
     opening = call("GET", "/api/payments/wallet")["available_minor"]
     funding = {"amount_minor": 1_000, "idempotency_key": "api-smoke-test-funding"}
     for _ in range(2):

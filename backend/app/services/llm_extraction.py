@@ -101,6 +101,14 @@ class LLMExtractionService:
                 specs.append(Spec(id=sid,description=item.description,part_number=item.part_number,parameters=parameters,
                     quantity=quantity,unit=item.unit,substitutes=item.substitutes,unresolved_questions=item.missing_fields))
         question = intent.clarification_question
+        # Chat has no form: adopt a request type or destination stated in the text instead of asking.
+        if intent.request_type in {"purchase", "shortlist"} and intent.request_type != request.request_type:
+            request.request_type = intent.request_type
+        if intent.destination:
+            parsed_destination = intent.destination.lower().strip()
+            form_destination = request.destination.lower().strip()
+            if parsed_destination not in form_destination and form_destination not in parsed_destination:
+                request.destination = intent.destination
         if question and (len(question.strip()) < 12 or question.strip().lower() in {"specifications","specs"}): question = None
         if not specs: question = question or "Which items or suppliers should I source?"
         if request.request_type == "purchase" and any(s.quantity is None for s in specs):
@@ -108,13 +116,6 @@ class LLMExtractionService:
         if any(s.unresolved_questions for s in specs):
             missing = "; ".join(missing_specs_text(s) for s in specs if s.unresolved_questions)
             question = question or "Please provide exact part numbers or the missing electrical/mechanical specifications for: "+missing+". The per-item quantities already supplied are retained."
-        if intent.request_type and intent.request_type != request.request_type:
-            question = question or "Does this request need a purchase plan or only a supplier shortlist? Confirm the request type."
-        if intent.destination:
-            parsed_destination = intent.destination.lower().strip()
-            form_destination = request.destination.lower().strip()
-            if parsed_destination not in form_destination and form_destination not in parsed_destination:
-                question = question or f"Your text specifies {intent.destination}, while the delivery field is {request.destination}. Confirm the destination in the request form."
         return specs, question
 
     def extract(self, run, *, follow_up=None):

@@ -117,6 +117,7 @@ def test_api_endpoint_inventory_and_success_contract(system):
         health = call("GET", "/api/health").json()
         assert health["status"] == "ok" and health["payments"] == "mock"
         assert health["worker"] == "separate process required"
+        assert call("GET", "/api/access").json() == {"ok": True}
         assert call("GET", "/api/runs").json() == []
         wallet_path = "/api/payments/wallet"
         funding_path = wallet_path + "/fund"
