@@ -757,16 +757,33 @@
       "BudgetUpdate": {
         "properties": {
           "research_budget_minor": {
-            "type": "integer",
-            "minimum": 0.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Research Budget Minor"
+          },
+          "provider_credit_limit": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Credit Limit"
           }
         },
         "additionalProperties": false,
         "type": "object",
-        "required": [
-          "research_budget_minor"
-        ],
         "title": "BudgetUpdate"
       },
       "Candidate": {
@@ -1194,12 +1211,11 @@
             "anyOf": [
               {
                 "type": "number",
-                "maximum": 10.0,
+                "maximum": 1000.0,
                 "minimum": 0.0
               },
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,2}0*$"
+                "type": "string"
               },
               {
                 "type": "null"
@@ -1697,6 +1713,17 @@
             "type": "string",
             "title": "Supplier Id"
           },
+          "recipient": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recipient"
+          },
           "subject": {
             "type": "string",
             "title": "Subject"
@@ -1717,6 +1744,7 @@
         "required": [
           "id",
           "supplier_id",
+          "recipient",
           "subject",
           "body",
           "status"
@@ -1745,6 +1773,17 @@
           "quoted_minor": {
             "type": "integer",
             "title": "Quoted Minor"
+          },
+          "quoted_credits": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quoted Credits"
           },
           "rationale": {
             "type": "string",
@@ -1788,6 +1827,7 @@
           "provider",
           "question",
           "quoted_minor",
+          "quoted_credits",
           "rationale",
           "status",
           "evidence_ids",
@@ -1913,12 +1953,11 @@
             "anyOf": [
               {
                 "type": "number",
-                "maximum": 10.0,
+                "maximum": 1000.0,
                 "minimum": 0.0
               },
               {
-                "type": "string",
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,2}0*$"
+                "type": "string"
               }
             ],
             "title": "Provider Credit Limit",
@@ -2041,7 +2080,6 @@
           },
           "provider_credit_limit": {
             "type": "string",
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,2}0*$",
             "title": "Provider Credit Limit",
             "default": "0.2"
           },
@@ -2290,6 +2328,25 @@
               "unverified"
             ],
             "title": "Identity"
+          },
+          "profile": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Profile"
+          },
+          "contact": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contact"
           }
         },
         "additionalProperties": false,
@@ -2302,7 +2359,9 @@
           "domain",
           "locations",
           "kind",
-          "identity"
+          "identity",
+          "profile",
+          "contact"
         ],
         "title": "Supplier"
       },
@@ -2372,6 +2431,13 @@
           "type": {
             "type": "string",
             "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
           }
         },
         "type": "object",

@@ -10,6 +10,29 @@ ITEMS = {
 }
 
 
+INDIAN_STATES = ["Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh", "Goa", "Gujarat", "Haryana", "Himachal Pradesh",
+    "Jharkhand", "Karnataka", "Kerala", "Madhya Pradesh", "Maharashtra", "Manipur", "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Punjab",
+    "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal", "Delhi", "Jammu and Kashmir"]
+# Leather clusters named by city; the supplier's state is what the company graph filters on.
+LEATHER_HUBS = {"kanpur": "Uttar Pradesh", "agra": "Uttar Pradesh", "noida": "Uttar Pradesh", "unnao": "Uttar Pradesh", "lucknow": "Uttar Pradesh",
+    "chennai": "Tamil Nadu", "ambur": "Tamil Nadu", "vaniyambadi": "Tamil Nadu", "ranipet": "Tamil Nadu", "vellore": "Tamil Nadu", "erode": "Tamil Nadu",
+    "kolkata": "West Bengal", "jalandhar": "Punjab", "dewas": "Madhya Pradesh", "dharavi": "Maharashtra", "mumbai": "Maharashtra"}
+LEATHER_PRODUCTS = [(r"\bhand ?bags?\b|\bbags?\b", "leather bags"), (r"\bwallets?\b", "leather wallets"), (r"\bbelts?\b", "leather belts"),
+    (r"\bshoes?\b|\bfootwear\b", "leather footwear"), (r"\bjackets?\b|\bgarments?\b", "leather garments"), (r"\bgloves?\b", "leather gloves"),
+    (r"\bsaddlery\b|\bharness", "saddlery")]
+
+
+def find_region(text):
+    """Supplier region named in the request; delivery cities ("to Bengaluru") are not supplier regions."""
+    for state in INDIAN_STATES:
+        if re.search(r"\b" + re.escape(state.lower()) + r"\b", text):
+            return state, None
+    for city, state in LEATHER_HUBS.items():
+        if re.search(r"\b(?:in|from|near|around|at)\s+" + city + r"\b", text) or re.search(r"\b" + city + r"[- ]based\b", text):
+            return state, city.title()
+    return None, None
+
+
 class FixtureParser:
     def parse(self, request):
         if request.specs:
@@ -20,9 +43,17 @@ class FixtureParser:
             return request.specs, None
         text = request.text.lower()
         if request.category == "leather_goods":
-            if "uttar pradesh" not in text:
-                return [], "This fixture supports Uttar Pradesh manufacturers. Confirm that location or provide a live adapter."
-            return [Spec(id="leather-shortlist", description="Leather-goods manufacturer shortlist", parameters={"location": "Uttar Pradesh"})], None
+            region, city = find_region(text)
+            if region is None:
+                return [], "Which Indian state or city should the leather-goods manufacturers be in (for example Uttar Pradesh, Kanpur or Tamil Nadu)?"
+            if request.mode == "fixture" and region != "Uttar Pradesh":
+                return [], "Fixture data only covers Uttar Pradesh. Switch to live data to search other regions."
+            params = {"location": region}
+            if city: params["city"] = city
+            product = next((label for word, label in LEATHER_PRODUCTS if re.search(word, text)), None)
+            if product: params["product"] = product
+            what = product or "leather goods"
+            return [Spec(id="leather-shortlist", description=f"{what[0].upper() + what[1:]} manufacturer shortlist, {city + ', ' if city else ''}{region}", parameters=params)], None
         if request.category not in {"electronics","leather_goods"}:
             return [], "Provide each item's description, specifications and quantity in the structured editor, or enable Gemini for natural-language requests in any category."
         matched = [(key, desc, params) for key, (pattern, desc, params) in ITEMS.items() if re.search(pattern, text)]

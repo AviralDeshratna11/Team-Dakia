@@ -8,9 +8,35 @@ When verified sourcing cannot finish, a durable task appears in the **Human revi
 
 A local procurement-agent skeleton for founders who currently compare suppliers, verify companies and calculate landed costs themselves. It turns a reference electronics BOM into an auditable plan and simulated orders, or a leather-goods request into a manufacturer shortlist and unsent RFQ drafts.
 
-**Fixture mode uses synthetic companies, demo prices/taxes and simulated payments. Live mode supports Crustdata Identify and bounded Search/Fetch, with a default cap of 0.2 provider credits per run. Gemini can optionally parse user requirements and extract cited supplier insights; purchasing facts remain independently unverified.** RFQs stay drafts. No external vendor is contacted and no real money moves.
+**Live mode finds and checks real suppliers through Crustdata.** For leather goods it searches Crustdata's company graph by state, checks each candidate with Company Enrich and count-only Job Search, and decides in plain code whether it is a real, active factory or a trader. It stops paying once the shortlist is full, buys a 1-credit news check only when it could change the shortlist, and drafts an RFQ to a named decision-maker at each chosen maker. Every credit is on the run's ledger with the reason it was spent, under a ceiling the founder can lower mid-run (default 25 credits). Sample-data mode still runs offline with synthetic companies. Payments stay simulated and RFQs stay drafts: no vendor is contacted and no real money moves.
 
-See [live-test results and the minimal credit policy](docs/live-test.md). The first live connectivity run used 2.2 credits; the new identity-only test is capped at 0.2 and has not been rerun against the live API after the budget change.
+## Live supplier checks (Crustdata)
+
+| Step | Crustdata call | Cost | What it decides |
+|---|---|---|---|
+| Find candidates | Company Search, ranked query + `locations.state` filter | 0.03 per result | Real companies with canonical IDs from the start |
+| Check each one | Company Enrich (basic info, headcount, locations, taxonomy, people, news, revenue) | 2 per company, reused free for 7 days | Active and stable, office in the region, named contact |
+| Factory or trader | Job Search, `limit: 0` counts of production vs sales posts | ~0 | Supporting evidence next to NAICS code and listed industry |
+| Only if it changes the result | Web Search, news, India, last 12 months | 1 | Complaints or bad news for a borderline maker |
+
+Signals are True, False or "not confirmed"; a missing fact never counts as a pass. Conflicting records (a manufacturing industry with a wholesale NAICS code) stay "not confirmed". A 429 retries on the next worker step, up to 3 times; a failed check leaves that supplier unverified instead of failing the run.
+
+**Live result, 22 Nov 2026** — the handbook's sample request ("Find three leather-goods manufacturers in Uttar Pradesh, check each is real and active, and draft the first email to each"):
+
+- 12 real Uttar Pradesh companies found in the company graph.
+- **5 rejected as traders or retailers.** Their industry records read Wholesale Import and Export, Retail Apparel and similar, even though their descriptions claim manufacturing.
+- **AKI India Ltd rejected for a red-flag headline.** It's a 32-year-old Kanpur tannery that passed every other check, but news showed a SEBI penalty for disclosure violations.
+- **Cinni Enterprises rejected as too new.** It was founded in 2026.
+- **Shortlist:** Movement Sparkle, TOGASAB and Ibbu Lifestyle. All three are listed as leather product manufacturers. A news check, bought only because it could change the shortlist, came back clean for each. Their stability is shown as *not confirmed*, because the records have too little age and headcount data.
+- **Cost:** 3 RFQ drafts for 8.36 credits. Eight profiles were reused from an earlier run at 0 credits. Two news checks were skipped because the shortlist was already full.
+
+Run one live request from the command line (reads `CRUSTDATA_API_KEY` from `.env`, never printed):
+
+```bash
+.venv/bin/python scripts/live_leather.py "Find three leather-goods manufacturers in Uttar Pradesh, check each is real and active, and draft the first email to each." --credits 25
+```
+
+For the dashboard, start the worker with the key in its environment: `set -a; source .env; set +a; .venv/bin/python -m app.workflow.worker` from `backend`.
 
 ## Gemini: two extraction stages
 

@@ -1,3 +1,4 @@
+from decimal import Decimal
 from contextlib import asynccontextmanager
 from pathlib import Path
 import os
@@ -16,7 +17,8 @@ from app.services.human_review import open_review, resolve_review
 
 
 class BudgetUpdate(Contract):
-    research_budget_minor: int = Field(ge=0)
+    research_budget_minor: int | None = Field(default=None, ge=0)
+    provider_credit_limit: float | None = Field(default=None, ge=0, le=1000)
 
 
 class ClarificationAnswer(Contract):
@@ -51,7 +53,7 @@ def create_app(database: Database | None = None):
 
     @app.get("/api/health")
     def health():
-        return {"status": "ok", "payments": "mock", "live_integrations": "Crustdata requires worker key; Gemini parsing/extraction uses Vertex service-account credentials or a Gemini API key", "worker": "separate process required"}
+        return {"status": "ok", "payments": "mock", "live_integrations": "Crustdata (company search, enrich, job counts, news, person search) requires worker key; Gemini parsing/extraction uses Vertex service-account credentials or a Gemini API key", "worker": "separate process required"}
 
     @app.get("/api/human-reviews",response_model=list[HumanReviewTask])
     def review_queue(request: Request):
@@ -122,8 +124,14 @@ def create_app(database: Database | None = None):
     def budget(run_id: str, body: BudgetUpdate, request: Request):
         with request.app.state.db.transaction() as c:
             run = get_run(c, run_id)
-            run.request.research_budget_minor = body.research_budget_minor
-            run.events.append(WorkflowEvent(state=run.state, message=f"Research ceiling updated to {body.research_budget_minor} paise; committed spend remains visible."))
+            if body.research_budget_minor is None and body.provider_credit_limit is None:
+                raise ValueError("send research_budget_minor, provider_credit_limit or both")
+            if body.research_budget_minor is not None:
+                run.request.research_budget_minor = body.research_budget_minor
+                run.events.append(WorkflowEvent(state=run.state, message=f"Research ceiling updated to {body.research_budget_minor} paise; committed spend remains visible."))
+            if body.provider_credit_limit is not None:
+                run.request.provider_credit_limit = Decimal(str(body.provider_credit_limit))
+                run.events.append(WorkflowEvent(state=run.state, message=f"Crustdata credit ceiling set to {body.provider_credit_limit:g}; credits already spent stay on the ledger and no new call may exceed it."))
             save_run(c, run)
         return run
 

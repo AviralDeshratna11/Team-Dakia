@@ -38,6 +38,9 @@ def assess(quote, supplier, request, pack, at: datetime | None = None) -> Candid
     for signal in pack.trust_signals:
         if signal in {"authorized", "factory"} and signals.get(signal) is not True:
             reasons.append(f"{signal.upper()}_UNVERIFIED_OR_FAILED")
+    for signal in pack.hard_fail_signals:
+        if signals.get(signal) is False:
+            reasons.append(f"{signal.upper()}_FAILED")
     cost = None
     if request.request_type == "purchase":
         if not pack.cost_policy_confirmed: reasons.append("COST_POLICY_UNCONFIRMED")
