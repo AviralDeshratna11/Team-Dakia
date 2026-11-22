@@ -56,6 +56,21 @@ After one rewrite, a part still at `NOT_FOUND` or `NO_MATCH` becomes "no supplie
 
 ---
 
+## 2026-11-22 · v0 pipeline: first full runs (Sid)
+
+v0 runs the whole BOM end to end: steps 1–2 are real, 3, 4 and 6 are stubs, and 5 is a placeholder rule. Every step's input and output is in `runs/<run_id>/`; `notebooks/walkthrough.ipynb` steps through them.
+
+**What we learned**
+
+- **DigiKey India's keyword URL** (`/en/products/result?keywords=<mpn>`) goes straight to the product page on an exact match. Without one (ESP32-S3-WROOM-1-N8R8, CL21A106KAQNNNE, TYPE-C-31-M-12) it returns a search list, which we don't parse yet, so it shows as `NO_MATCH`.
+- **DigiKey blocks intermittently** with Cloudflare ("Just a moment..."). The same LDO URL worked, then was blocked 30 minutes later. `human_mode: true` gets through at the same 1 credit, so DigiKey always uses it.
+- **Same part number, different maker.** LCSC lists AP2112K-3.3TRG1 from Diodes Inc (₹8.32) *and* from TECH PUBLIC (₹6.27). v0's first run picked the TECH PUBLIC part as cheapest. We now match the maker as well as the part number, and a mismatch is rejected as "possible clone". This is a good demo case.
+- **Near-miss part numbers are substitute candidates:** CL21A106KA**Y**NNNE for KA**Q**NNNE (a different voltage rating), TYPE-C-31-M-12**A**, AP2112K-3.3TRG1**(MS)**. They're kept as `alternatives`. Spec-based matching on parameters is next.
+- **Google redirect links can't be decoded** (the `url=` value is encrypted), so leads from open search have no domain yet. Step 3 needs the real domain, probably from the fetched page's canonical URL.
+- **Speed and cost:** a cold full BOM takes 1.5–3 minutes and ~20 credits; a cached re-run takes ~0.1s and 0 credits. Blocked pages are cached for 1 hour only.
+
+---
+
 ## Later (not now)
 
 - When data is missing or blocked, pay third-party data services for it.

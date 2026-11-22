@@ -1,0 +1,36 @@
+# Category pack: electronics. Everything field-specific lives here, not in code.
+
+name: electronics
+
+# Currency -> INR. PLACEHOLDER rates: set them to the day's rate before the demo.
+fx_to_inr:
+  INR: 1.0
+  USD: 88.0
+  JPY: 0.57
+
+# Known distributors, fetched directly (search can't be restricted to one site; see NOTES.md).
+#   url:        product page, or a keyword URL that redirects to it on an exact match
+#   search_url: a search page; we follow up to max_products product links from it
+distributors:
+  - name: DigiKey India
+    domain: digikey.in
+    extractor: digikey
+    human_mode: true    # plain fetch hits Cloudflare ("Just a moment...") intermittently; same 1 credit
+    url: "https://www.digikey.in/en/products/result?keywords={mpn}"
+
+  - name: LCSC
+    domain: lcsc.com
+    extractor: lcsc
+    search_url: "https://www.lcsc.com/search?q={mpn}"
+    max_products: 3
+
+  # Blocked as of 2026-11-22 (also in human_mode). Kept so the gap shows up for step 4.
+  - name: Mouser India
+    domain: mouser.in
+    extractor: null
+    url: "https://www.mouser.in/c/?q={mpn}"
+
+# One open search per part, to find sellers we don't know. They become leads for step 3.
+discovery:
+  query: "{mpn} buy India"
+  max_leads: 8
