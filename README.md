@@ -1,5 +1,8 @@
 # Sourcing Desk
 
+Link to the website: https://teamdakia-sourcing.serveousercontent.com
+(DONOT run on Bits Wifi due to Fortiguard blocking the website)
+
 **An auditable procurement agent for founders.** Describe what you need in plain language. The agent parses the request, finds suppliers, verifies that they are real and active, screens them for compliance, compares landed cost, and returns a shortlist with unsent RFQ drafts or a purchase plan with simulated, idempotent checkout. Every decision cites its evidence, every credit spent is on a ledger, and anything uncertain comes back to you as a question.
 
 LLMs gather facts and draft text. **Plain code decides.** Eligibility, budgets, approvals and payments are deterministic and never delegated to a model.
