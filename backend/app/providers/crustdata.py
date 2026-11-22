@@ -178,6 +178,19 @@ class CrustdataClient:
         return self.post(run_id, "/company/enrich", {"crustdata_company_ids":[int(i) for i in company_ids],"fields":fields},
                          units=len(company_ids), purpose=purpose)
 
+    def person_search(self, run_id, company_id, titles, limit=3, purpose="Find who owns or runs the company"):
+        body = {"filters": {"op": "and", "conditions": [
+                    {"field": "experience.employment_details.current.company_id", "type": "=", "value": int(company_id)},
+                    {"op": "or", "conditions": [{"field": "experience.employment_details.current.title", "type": "(.)", "value": t} for t in titles]}]},
+                "fields": ["basic_profile.name", "basic_profile.current_title"], "limit": limit}
+        result = self.post(run_id, "/person/search", body, units=limit, purpose=purpose)
+        people = []
+        for profile in result.get("profiles") or []:
+            basic = profile.get("basic_profile") or {}
+            if basic.get("name"):
+                people.append({"name": basic["name"], "title": basic.get("current_title") or ""})
+        return people
+
     def job_count(self, run_id, filters, purpose="Count job postings to tell a factory from a trader"):
         """Counts only (limit 0): search bills per returned row, so this returns no rows."""
         body = self.post(run_id, "/job/search", {"filters":filters,"limit":0,"aggregations":[{"type":"count"}]}, units=1, purpose=purpose)

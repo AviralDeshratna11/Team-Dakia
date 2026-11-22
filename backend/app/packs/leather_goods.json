@@ -1,6 +1,6 @@
 {
   "name": "leather_goods",
-  "version": "3",
+  "version": "4",
   "spec_fields": [
     "material",
     "finish",
@@ -96,6 +96,8 @@
   ],
   "hard_fail_signals": [
     "stable",
-    "complaints_clear"
-  ]
+    "complaints_clear",
+    "compliance"
+  ],
+  "compliance_screen": true
 }

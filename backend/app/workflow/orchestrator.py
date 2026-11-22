@@ -13,19 +13,21 @@ from app.providers.live import LiveBoundary
 from app.providers.crustdata import CrustdataClient, CreditLimitReached, RateLimited
 from app.providers.live_discovery import LiveDiscovery, LiveCompanyDiscovery, LiveCompanyChecks
 from app.domain.supplier_signals import news_verdict
+from app.domain.compliance import is_owner, classify_articles, front_company_flags, verdict as compliance_verdict
 from app.providers.interfaces import IntegrationUnavailable
 from app.providers.mock_checkout import MockPayments
 from app.services.specification_parser import FixtureParser
 from app.providers.gemini import GeminiClient
 from app.services.llm_extraction import LLMExtractionService
 
-ACTIVE = {S.CREATED, S.PARSING, S.DISCOVERING, S.VERIFYING, S.RESEARCHING, S.DECIDING, S.EXECUTING}
+ACTIVE = {S.CREATED, S.PARSING, S.DISCOVERING, S.VERIFYING, S.RESEARCHING, S.DECIDING, S.SCREENING, S.EXECUTING}
 
 
 def fingerprint(run):
     payload = {"specs": [s.model_dump(mode="json") for s in run.specs],
                "quotes": [q.model_dump(mode="json") for q in run.quotes],
-               "suppliers": [s.model_dump(mode="json") for s in run.suppliers],
+               # Profiles and contacts are display data; screening notes must not invalidate approvals.
+               "suppliers": [s.model_dump(mode="json", exclude={"profile", "contact"}) for s in run.suppliers],
                "pack": pack_for(run.request.category).model_dump(mode="json"),
                "destination": run.request.destination, "deadline": run.request.deadline.isoformat(),
                "threshold": run.request.approval_threshold_minor}
@@ -126,9 +128,21 @@ class Orchestrator:
             transition(run, S.DECIDING, "Research complete or budget unavailable; uncertainty retained.")
         elif run.state == S.DECIDING:
             self.build_plan(run, pack)
+            if self.unscreened_finalists(run, pack):
+                transition(run, S.SCREENING, "Shortlist drafted. Screening each finalist (who runs it, adverse news, front-company signs) before anything goes out.")
+                return
             needs_approval = any(o.state == "PLANNED" for o in run.orders)
             transition(run, S.WAITING_FOR_APPROVAL if needs_approval else S.EXECUTING,
                        "Plan saved; exact amounts require approval." if needs_approval else "Plan saved; executing mock orders or preparing RFQ drafts.")
+        elif run.state == S.SCREENING:
+            finalists = self.unscreened_finalists(run, pack)
+            if finalists:
+                if self.screen_finalist(run, finalists[0], pack) == "block":
+                    transition(run, S.RESEARCHING, f"{finalists[0].name} blocked by the compliance screen; looking for a replacement.")
+                return
+            needs_approval = any(o.state == "PLANNED" for o in run.orders)
+            transition(run, S.WAITING_FOR_APPROVAL if needs_approval else S.EXECUTING,
+                       "Finalists screened. " + ("Exact amounts require approval." if needs_approval else "Preparing RFQ drafts; held ones are marked for your review."))
         elif run.state == S.EXECUTING:
             # Resolve effects from a prior crash before considering any replacement plan.
             for order in run.orders:
@@ -290,14 +304,18 @@ class Orchestrator:
         for quote in run.quotes:
             if quote.signals.get("complaints_clear") is not None or quote.status != "verified":
                 continue
-            if any(p.quote_id == quote.id for p in run.research):
+            earlier = [p for p in run.research if p.quote_id == quote.id]
+            if any(p.status == "paid" for p in earlier):
+                continue
+            # A skip because the shortlist was full is reconsidered once a finalist is blocked.
+            if earlier and not ("already full" in earlier[-1].rationale and len(qualified) < run.request.shortlist_count):
                 continue
             supplier = suppliers[quote.supplier_id]
             hypothetical = quote.model_copy(update={"signals": dict(quote.signals, complaints_clear=True)})
             could_qualify = assess(hypothetical, supplier, run.request, pack).eligible
             already = quote.supplier_id in qualified
             needed = len(qualified) < run.request.shortlist_count
-            pid = f"research:{run.id}:{quote.id}"
+            pid = f"research:{run.id}:{quote.id}" + (f":{len(earlier)}" if earlier else "")
             if already or not could_qualify or not needed:
                 why = ("it already qualifies without it" if already else
                        "other checks rule it out anyway" if not could_qualify else "the shortlist is already full")
@@ -337,6 +355,61 @@ class Orchestrator:
             run.events.append(WorkflowEvent(state=run.state, message=f"Bought a news check on {supplier.name} (quoted up to 1 credit; the ledger shows the actual charge): {'clean' if clear else 'red flag found'}."))
             return True
         return False
+
+    def unscreened_finalists(self, run, pack):
+        if not (pack.compliance_screen and run.request.mode == "live" and run.decisions):
+            return []
+        screened = {c.supplier_id for c in run.checks if c.kind == "compliance"}
+        chosen = [sid for d in run.decisions for sid in d.selected_supplier_ids]
+        return [s for s in run.suppliers if s.id in chosen and s.id not in screened]
+
+    def screen_finalist(self, run, supplier, pack):
+        """Who runs it, adverse news on them (namesakes cleared), front-company flags -> approve / hold / block."""
+        client = self.crustdata(run)
+        people = list((supplier.profile or {}).get("people") or [])
+        directors = [p for p in people if is_owner(p.get("title"))]
+        source, lookup_failed, evidence = "company profile", None, []
+        if not directors:
+            try:
+                found = client.person_search(run.id, supplier.canonical_id, ["founder", "owner", "proprietor", "director", "partner", "ceo"],
+                                             purpose=f"Find who owns or runs {supplier.name}")
+                directors, source = [p for p in found if is_owner(p.get("title"))] or found[:1], "Person Search"
+            except CreditLimitReached:
+                lookup_failed = "Credit ceiling reached before the owner could be looked up"
+            except IntegrationUnavailable as exc:
+                lookup_failed = f"Owner lookup failed ({str(exc).split(':')[0]})"
+        screened = []
+        adverse = []
+        for person in directors[:2]:
+            try:
+                start = (now() - timedelta(days=3 * 365)).timestamp()
+                result = client.news_search(run.id, f'"{person["name"]}"', start_date=start, purpose=f"Adverse-media screen on {person['name']} ({supplier.name})")
+                articles = [{"title": r.get("title"), "url": r.get("url"), "snippet": r.get("snippet")} for r in result.get("results") or [] if r.get("title")]
+                split = classify_articles(person["name"], supplier, articles)
+            except CreditLimitReached:
+                lookup_failed = "Credit ceiling reached before every director could be screened"
+                break
+            except IntegrationUnavailable as exc:
+                lookup_failed = f"News screen failed for {person['name']} ({str(exc).split(':')[0]})"
+                continue
+            adverse += split["adverse"]
+            screened.append({"name": person["name"], "title": person.get("title"), "source": source, **split})
+            evidence.append(Evidence(reference="https://api.crustdata.com/web/search/live", provider="crustdata_web_search", mode="live",
+                fact=f"adverse-media screen: {person['name']}", value=json.dumps(screened[-1])[:8000],
+                status="verified"))
+        flags = front_company_flags(supplier, run.suppliers)
+        result, reasons = compliance_verdict(screened or directors, flags, adverse, lookup_failed)
+        run.evidence.extend(evidence)
+        supplier.profile = dict(supplier.profile or {}, compliance={"verdict": result, "reasons": reasons, "front_flags": flags,
+                                "directors": screened or [dict(d, source=source) for d in directors]})
+        run.checks.append(SupplierCheck(supplier_id=supplier.id, kind="compliance", evidence_ids=[e.id for e in evidence],
+            result={"approve": "pass", "hold": "unverified", "block": "fail"}[result], reason="; ".join(reasons)))
+        if result == "block":
+            for quote in (q for q in run.quotes if q.supplier_id == supplier.id):
+                quote.signals["compliance"] = False
+        label = {"approve": "approved", "hold": "held for your review", "block": "blocked"}[result]
+        run.events.append(WorkflowEvent(state=run.state, message=f"Compliance screen on {supplier.name}: {label}. {reasons[0] if reasons else ''}".strip()))
+        return result
 
     def build_plan(self, run, pack):
         suppliers = {s.id: s for s in run.suppliers}

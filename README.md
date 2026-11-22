@@ -24,6 +24,20 @@ Signals are True, False or "not confirmed"; a missing fact never counts as a pas
 - **Shortlist:** Movement Sparkle, TOGASAB and Ibbu Lifestyle. All three are listed as leather product manufacturers. A news check, bought only because it could change the shortlist, came back clean for each. Their stability is shown as *not confirmed*, because the records have too little age and headcount data.
 - **Cost:** 3 RFQ drafts for 8.36 credits. Eight profiles were reused from an earlier run at 0 credits. Two news checks were skipped because the shortlist was already full.
 
+## Compliance screen on finalists (Trust and compliance, themes 5.1 and 5.2)
+
+Before any RFQ or order goes out, each finalist gets a vendor check. It covers the gap that has cost Indian buyers most: a front company that looks real on paper.
+
+1. **Who runs it.** Owners and directors come from Company Enrich `people`. If the profile has none, Person Search looks for current employees with founder, owner, proprietor, director, partner or CEO titles.
+2. **Adverse media on each director.** An Indian news search covers the last 3 years. **Namesakes are cleared**: an article counts only if it also names the company, its domain or its city. A "fraud" headline about someone else with the same name is listed as cleared, not counted.
+3. **Front-company signs.** These are: founded under 2 years ago; 3 or fewer staff for a supposed factory; an address on record that is a list of post offices rather than a street address; the same street address as another candidate.
+4. **Verdict.**
+   - **Block:** adverse news tied to the company's leadership. The supplier leaves the shortlist and the run goes back to research to qualify a replacement.
+   - **Hold:** the owner can't be confirmed, or there are front-company signs. The supplier stays on the shortlist, but its RFQ is marked "held for your review before sending".
+   - **Approve:** none of the above.
+
+On the live Uttar Pradesh request, all three finalists were **held**. Crustdata has no named owner for any of them, and their address records are post-office lists. The agent says so instead of letting an unverified vendor through. The screen added 0.36 credits: Person Search and news searches that found nothing are free.
+
 Run one live request from the command line (reads `CRUSTDATA_API_KEY` from `.env`, never printed):
 
 ```bash

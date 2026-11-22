@@ -26,3 +26,12 @@
 .meter { height: 8px; background: #f1f5f9; border-radius: 999px; overflow: hidden; margin: 8px 0 12px; }
 .meter span { display: block; height: 100%; background: #2563eb; }
 .rfq-body { white-space: pre-wrap; }
+
+.compliance { border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; background: #fbfdff; }
+.compliance small { display: block; color: #475569; }
+.director { border-top: 1px dashed #e2e8f0; padding-top: 4px; }
+.bad-text { color: #991b1b !important; }
+.pill.amber { background: #fef3c7; color: #92400e; }
+.trust-card.amber { border-top-color: #d97706; }
+.hold-note { background: #fef3c7; color: #92400e; padding: 6px 10px; border-radius: 6px; font-size: 13px; }
+.approve-note { color: #166534; font-size: 13px; margin: 0; }

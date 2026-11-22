@@ -158,7 +158,7 @@ def news_verdict(articles: list[dict]) -> tuple[bool | None, list[str], list[dic
     return None, ["No news on record"], items
 
 
-def pick_contact(data: dict) -> dict[str, str] | None:
+def named_people(data: dict) -> list[dict[str, str]]:
     people = []
     for group in ("decision_makers", "cxos", "founders"):
         for person in _get(data, f"people.{group}") or []:
@@ -167,6 +167,11 @@ def pick_contact(data: dict) -> dict[str, str] | None:
             if name:
                 title = (profile or {}).get("current_title") or person.get("title") or ""
                 people.append({"name": name, "title": title, "group": group})
+    return people
+
+
+def pick_contact(data: dict) -> dict[str, str] | None:
+    people = named_people(data)
     for terms in (RFQ_TITLE_TERMS, OWNER_TITLE_TERMS):
         match = next((p for p in people if _has([p["title"]], terms)), None)
         if match:
@@ -219,6 +224,7 @@ def assess_company(data: dict, *, region: str | None, relevance_keywords: list[s
                   "date": a.get("article_publish_date") or a.get("date")} for a in articles[:3]],
         "job_counts": job_counts or {},
         "contact": contact,
+        "people": [{"name": p["name"], "title": p["title"]} for p in named_people(data)][:6],
     }
     return Assessment(
         signals={"identity": True, "factory": factory, "stable": stable, "complaints_clear": clear},

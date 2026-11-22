@@ -1429,6 +1429,7 @@
           "VERIFYING",
           "RESEARCHING",
           "DECIDING",
+          "SCREENING",
           "WAITING_FOR_APPROVAL",
           "EXECUTING",
           "COMPLETED",
