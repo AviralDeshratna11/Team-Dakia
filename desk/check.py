@@ -17,11 +17,11 @@ ENRICH_FIELDS = ["basic_info", "headcount", "locations", "web_traffic"]
 
 def check_suppliers(finds: list[FindResult], pack: dict, cd: Crustdata) -> list[Check]:
     dists = {d["domain"]: d for d in pack["distributors"]}
-    vendors = {q.vendor_domain: q.vendor for f in finds for q in f.quotes if q.status in PRICED}
+    vendors = {q.vendor_domain: (q.vendor, q.company_id) for f in finds for q in f.quotes if q.status in PRICED}
     checks, by_company = [], {}
-    for domain, vendor in vendors.items():
+    for domain, (vendor, company_id) in vendors.items():
         dist = dists.get(domain, {})
-        c = _check_one(vendor, domain, dist.get("company_domain") or domain, dist, pack, cd)
+        c = _check_one(vendor, domain, dist.get("company_domain") or domain, dist, pack, cd, company_id)
         if c.company_id is not None and c.company_id in by_company:
             first = by_company[c.company_id]
             c.reason = f"same company as {first.vendor} ({first.vendor_domain}); " + c.reason
@@ -31,14 +31,22 @@ def check_suppliers(finds: list[FindResult], pack: dict, cd: Crustdata) -> list[
     return checks
 
 
-def _check_one(vendor: str, domain: str, seller_domain: str, dist: dict, pack: dict, cd: Crustdata) -> Check:
+def _check_one(vendor: str, domain: str, seller_domain: str, dist: dict, pack: dict, cd: Crustdata,
+               company_id: int | None = None) -> Check:
     rules = pack["reliability"]
     w = rules["weights"]
     base = dict(vendor=vendor, vendor_domain=domain, seller_domain=seller_domain)
     src = f"Crustdata Company Identify ({seller_domain})"
 
     try:
-        matches = cd.identify(seller_domain)
+        if company_id is not None and seller_domain.startswith("crustdata-"):
+            # found by Company Search with no domain: the search result itself is the company record
+            e0 = cd.enrich(company_id, ENRICH_FIELDS) or {}     # same call as below: cached, charged once
+            matches = [{"confidence_score": 1.0, "company_data": {"crustdata_company_id": company_id,
+                                                                  "basic_info": e0.get("basic_info") or {}}}]
+            src = f"Crustdata Company Search (id {company_id})"
+        else:
+            matches = cd.identify(seller_domain)
     except CrustdataError as e:
         return Check(**base, company_id=None, company_name=None, status="UNVERIFIED", score=None, signals=[],
                      reason=f"identify failed: {e}")
@@ -82,8 +90,10 @@ def _check_one(vendor: str, domain: str, seller_domain: str, dist: dict, pack: d
     visitors = max((v.get("monthly_visitors") or 0 for v in traffic.values() if isinstance(v, dict)), default=None)
     signals.append(Signal(name="web_traffic", value=f"{visitors:,.0f} monthly visitors" if visitors else None,
                           ok=(visitors >= rules["min_monthly_visitors"]) if visitors else None,
-                          weight=w["web_traffic"], source=esrc))
+                          weight=w.get("web_traffic", 0), source=esrc))
 
+    if "web_traffic" not in w:
+        signals = [s for s in signals if s.name != "web_traffic"]
     if "authorized" in dist:
         signals.append(Signal(name="authorized", value="authorized distributor" if dist["authorized"]
                               else "not an authorized distributor", ok=bool(dist["authorized"]),

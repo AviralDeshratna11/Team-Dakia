@@ -42,6 +42,7 @@ class RfqThread(BaseModel):
     deliver_to: str | None
     need_by: date | None
     status: str                      # NEW | SENT | REPLIED | FOLLOWED_UP | QUOTED | ESCALATED
+    questions: list[str] = []        # field-specific things to ask (from the pack)
     followups: int = 0
     messages: list[RfqMessage] = []
     quote: dict | None = None
@@ -75,8 +76,9 @@ SYSTEM = """You run request-for-quote email threads for a company in India, as "
   numbers exactly as the vendor wrote them, with their exact words in vendor_words.
 - If something important is missing and you may still follow up, send ONE email asking only for what's
   missing, then finish with action FOLLOWED_UP.
-- If the vendor asks for something only the founder can decide (advance payment, NDA, custom work,
-  samples, a call), or you can't follow up again, finish with action ESCALATE and say why in note."""
+- Record payment terms exactly as the vendor states them (e.g. an advance); code flags those for the founder.
+- If the vendor asks for something only the founder can decide (NDA, custom work, paid samples, a call),
+  or you can't follow up again, finish with action ESCALATE and say why in note."""
 
 
 # ---------- storage ----------
@@ -113,7 +115,8 @@ def threads(request_key: str | None = None) -> list[RfqThread]:
 
 
 def open_thread(request_key: str, spec: Spec, vendor: str, vendor_domain: str, deliver_to: str | None,
-                need_by: date | None, vendor_email: str | None = None) -> RfqThread:
+                need_by: date | None, vendor_email: str | None = None,
+                questions: list[str] | None = None) -> RfqThread:
     tid = hashlib.sha256(f"{request_key}|{spec.line_id}|{vendor_domain}".encode()).hexdigest()[:12]
     existing = get(tid)
     if existing:
@@ -121,8 +124,11 @@ def open_thread(request_key: str, spec: Spec, vendor: str, vendor_domain: str, d
     part = f"{spec.description} ({spec.mpn}" + (f", {spec.maker}" if spec.maker else "") + ")" \
         + (f"; specs: {', '.join(f'{k}={v}' for k, v in spec.params.items())}" if spec.params else "")
     return save(RfqThread(thread_id=tid, request_key=request_key, line_id=spec.line_id, vendor=vendor,
-                          vendor_domain=vendor_domain, vendor_email=vendor_email or f"sales@{vendor_domain}",
-                          part=part, qty=spec.qty, deliver_to=deliver_to, need_by=need_by, status="NEW"))
+                          vendor_domain=vendor_domain, vendor_email=vendor_email or (f"contact unknown: {vendor} (mock mailbox)"
+                                                          if vendor_domain.startswith("crustdata-")
+                                                          else f"sales@{vendor_domain}"),
+                          part=part, qty=spec.qty, deliver_to=deliver_to, need_by=need_by, status="NEW",
+                          questions=questions or []))
 
 
 def vendor_reply(thread_id: str, body: str) -> RfqThread:
@@ -158,7 +164,8 @@ def run_thread(t: RfqThread) -> AgentResult | None:
                    "required": ["subject", "body"]}, send_email)]
     history = "\n\n".join(f"[{m.direction.upper()} {m.at}] {m.subject}\n{m.body}" for m in t.messages) or "(none yet)"
     task = (f"Vendor: {t.vendor} <{t.vendor_email}>\nWe need: {t.qty} x {t.part}\nDeliver to: {t.deliver_to or 'India'}"
-            f"\nNeeded by: {t.need_by or 'not stated'}\nFollow-ups used: {t.followups}/{MAX_FOLLOWUPS}\n\n"
+            f"\nNeeded by: {t.need_by or 'not stated'}\nFollow-ups used: {t.followups}/{MAX_FOLLOWUPS}\n"
+            + (f"Also ask (this field): {'; '.join(t.questions)}\n" if t.questions else "") + "\n"
             f"Thread so far:\n{history}\n\n"
             + ("Write and send the first RFQ email, then finish with action SENT." if t.status == "NEW"
                else "The vendor replied. Decide: QUOTED, FOLLOWED_UP (send one email first) or ESCALATE."))
@@ -207,4 +214,7 @@ def quote_from(t: RfqThread, spec: Spec, fx: dict) -> Quote | None:
               manufacturer=spec.maker, moq=rq.moq, lead_time_days=rq.lead_time_days, ships_to_india=rq.ships_to_india,
               tiers=[PriceTier(min_qty=rq.moq or 1, unit_price=rq.unit_price, currency=rq.currency.upper())],
               evidence=[f"vendor's email: {rq.vendor_words}"])
+    terms = (rq.payment_terms or "").lower()
+    if "advance" in terms or "prepay" in terms or "upfront" in terms:
+        q.flags.append(f"vendor wants payment before delivery: {rq.payment_terms}")
     return q

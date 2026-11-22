@@ -34,7 +34,10 @@ def load_packs() -> dict[str, dict]:
 
 def find_suppliers(spec: Spec, pack: dict, cd: Crustdata) -> FindResult:
     """Search the first part number; if no site has it (only BLOCKED, NO_MATCH or NOT_FOUND),
-    retry once with the next candidate and keep whichever attempt did better."""
+    retry once with the next candidate and keep whichever attempt did better.
+    Packs with find_mode: company_search (made-to-order fields) shortlist makers instead."""
+    if pack.get("find_mode") == "company_search":
+        return _find_makers(spec, pack, cd)
     tried, best = [], None
     for cand in [PartCandidate(mpn=spec.mpn, maker=spec.maker), *spec.alternates][:2]:
         res = _find_one(spec.model_copy(update={"mpn": cand.mpn, "maker": cand.maker}), pack, cd)
@@ -45,6 +48,27 @@ def find_suppliers(spec: Spec, pack: dict, cd: Crustdata) -> FindResult:
             break
     best.tried = tried
     return best
+
+
+def _find_makers(spec: Spec, pack: dict, cd: Crustdata) -> FindResult:
+    """Made-to-order fields have no catalogue prices: find real makers with Crustdata Company Search.
+    Each becomes a GAP quote (no price yet); the RFQ step asks them for one."""
+    cfg = pack["company_search"]
+    country = {"india": "IND"}.get(str(cfg.get("country") or "").lower(), cfg.get("country"))   # Crustdata uses ISO-3
+    filters = {"field": "locations.country", "type": "=", "value": country} if country else None
+    quotes = []
+    for c in cd.company_search(cfg["query"], filters=filters, limit=cfg.get("max_companies", 5)):
+        b, cid = c.get("basic_info") or {}, c.get("crustdata_company_id")
+        quotes.append(Quote(line_id=spec.line_id, vendor=b.get("name") or f"company {cid}",
+                            vendor_domain=b.get("primary_domain") or f"crustdata-{cid}", company_id=cid,
+                            url=b.get("website") or "", fetched_at=datetime.now(timezone.utc), status=Status.GAP,
+                            found_by="search", note="maker found; no price yet (needs an RFQ)",
+                            evidence=[f"Crustdata Company Search '{cfg['query']}': {b.get('name')}, "
+                                      f"{(c.get('locations') or {}).get('headquarters')}"]))
+    return FindResult(line_id=spec.line_id, mpn=spec.mpn, maker=spec.maker, tried=[f"company search: {cfg['query']}"],
+                      status=Status.GAP if quotes else Status.NOT_FOUND,
+                      reason=f"{len(quotes)} makers found by Crustdata Company Search", quotes=quotes,
+                      alternatives=[], leads=[])
 
 
 def _find_one(spec: Spec, pack: dict, cd: Crustdata) -> FindResult:
@@ -228,6 +252,11 @@ def decide(spec: Spec, find: FindResult, checks: list[Check], pack: dict,
               for r in review if best is None or r["landed_inr"] < best[2].total_inr]
     substitutes = sorted({q.mpn for q in find.alternatives if q.mpn})
 
+    waiting = [q for q in find.quotes if q.note.startswith("RFQ ")]
+    if best is None and not review and waiting:
+        return Decision(line_id=spec.line_id, status="WAITING_FOR_QUOTES", rule=rule, picked=None, total_inr=None,
+                        reason=f"RFQs out to {len(waiting)} vendor(s): " + "; ".join(f"{q.vendor} ({q.note})" for q in waiting),
+                        rejected=rejected, considered=considered)
     if best is None:
         status = "NEEDS_FOUNDER" if review else "NONE"
         if review:
@@ -243,7 +272,7 @@ def decide(spec: Spec, find: FindResult, checks: list[Check], pack: dict,
                         substitutes=substitutes if status == "NONE" else [])
 
     q, c, lc = best
-    reason = (f"{q.vendor}: {q.manufacturer} {q.mpn}, {q.buy_qty} x ₹{q.unit_price_inr} -> landed ₹{lc.total_inr:,.2f} "
+    reason = (f"{q.vendor}: {q.manufacturer or ''} {q.mpn}, {q.buy_qty} x ₹{q.unit_price_inr} -> landed ₹{lc.total_inr:,.2f} "
               f"(₹{lc.per_unit_inr}/unit, arrives by {lc.arrives_by}); seller {c.company_name}, score {c.score}; "
               f"stock {q.stock}; source {q.url} fetched {q.fetched_at:%Y-%m-%d %H:%M} UTC")
     if lc.placeholder_rates:

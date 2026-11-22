@@ -49,7 +49,8 @@ class _Parsed(BaseModel):
 
 
 PROMPT = """You turn a founder's purchase request into a structured spec for a sourcing agent.
-Today is {today}. Known categories: {categories}.
+Today is {today}. Known categories: {categories}. If the request is for a different field, set
+category to a short snake_case name for that field (e.g. leather_goods).
 
 Rules:
 - Use only facts stated in the request and the founder's answers. Never invent quantities, places,
@@ -64,6 +65,9 @@ Rules:
   named a part number, it comes first. Give the full orderable part number with every ordering suffix
   (memory size, package, temperature grade), never a family or series name. These are checked against
   live distributor data, so only list part numbers you are confident exist.
+- Made-to-order goods with no manufacturer part numbers (leather goods, textiles, custom machined parts):
+  give ONE candidate whose mpn is a short product code built from the spec (e.g. SLEEVE-15IN-BLACK-LEATHER)
+  and an empty manufacturer.
 - If a spec that decides which part to buy is missing, so you can't responsibly name a candidate
   (e.g. "a small regulator" with no voltage or current), leave candidates empty and write ONE short
   clarifying_question for that line. Don't ask about anything that wouldn't change which part to buy.
@@ -92,9 +96,7 @@ def understand_specs(req: Request, packs: dict[str, dict], final: bool = False) 
                                    spec_hint=hints, text=req.text.strip(), answers=answers,
                                    final=FINAL_PASS if final else ""), _Parsed)
 
-    category = req.category or parsed.category
-    if category not in packs:
-        raise ValueError(f"category {category!r} has no pack yet (have: {', '.join(packs)})")
+    category = re.sub(r"[^a-z0-9_]+", "_", (req.category or parsed.category or "unknown").lower()).strip("_")
     units = req.units or parsed.units
     deadline = req.deadline or _deadline(parsed)
 

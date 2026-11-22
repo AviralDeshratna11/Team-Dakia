@@ -4,6 +4,7 @@ python -m desk orders                 # every order and its state
 python -m desk approve <order_key>    # approve a held order; the next run pays it
 python -m desk rfq [thread_id]        # RFQ threads, or one thread's emails
 python -m desk rfq reply <thread_id> "text"   # reply as the vendor (a teammate, in the hackathon)
+python -m desk pack approve <name>    # approve a pack the agent drafted for a new field
 """
 
 import argparse
@@ -12,7 +13,7 @@ import sys
 
 import pandas as pd
 
-from desk import orders, pipeline, rfq, view
+from desk import draft_pack, orders, pipeline, rfq, view
 from desk.trace import load_run
 
 pd.set_option("display.width", 200)
@@ -43,6 +44,16 @@ def show(records: list[dict]) -> None:
             for a in o["assumptions"]:
                 print(f"  assumed: {a}")
             print()
+        if r["step"] == "01b_draft_pack" and o:
+            pack, ag = o
+            print(f"DRAFTED PACK '{pack['name']}' by agent ({ag['stop_reason']}, {ag['turns']} turns, "
+                  f"{ag['credits']:.1f} credits): {pack['summary'][:300]}")
+            print(f"  find makers: {pack['company_search']}; ordering: {pack['ordering']}")
+            print(f"  ask vendors: {pack['rfq']['questions']}")
+            print(f"  trust signals: {pack['trust_signals']}\n")
+        if r["step"] == "01b_pack_gate":
+            print(f"PACK GATE: {o['status']}" + (f" ({o.get('answer')})" if o.get("answer") else "")
+                  + (f" - approve with: {o['approve_with']}" if o.get("approve_with") else "") + "\n")
         if r["step"] == "02_find" and o:
             print(f"FIND [{r['part']}] {o['status']} ({' | '.join(o['tried'])}): {o['reason']}")
         if r["step"] == "02b_investigate" and o:
@@ -56,7 +67,7 @@ def show(records: list[dict]) -> None:
                     print(f"      red flag: {f}")
             for q in o["quotes"]:
                 print(f"  -> agent quote: {q['vendor']} {q['status']} ₹{q['unit_price_inr']}/unit {q['note']}")
-        if r["step"] == "02c_rfq" and o:
+        if r["step"] == "03b_rfq" and o:
             for t in o:
                 print(f"  RFQ [{t['line_id']}] {t['vendor']}: {t['status']}" + (f" - {t['escalation']}" if t["escalation"] else ""))
         if r["step"] == "03_check" and o:
@@ -105,6 +116,9 @@ def main() -> None:
     sub.add_parser("orders")
     ap = sub.add_parser("approve")
     ap.add_argument("order_key")
+    pk = sub.add_parser("pack")
+    pk.add_argument("action", choices=["approve"])
+    pk.add_argument("name")
     rq = sub.add_parser("rfq")
     rq.add_argument("args", nargs="*", help="[thread_id] | reply <thread_id> <text>")
     a = p.parse_args()
@@ -126,6 +140,9 @@ def main() -> None:
         print(view.orders().to_string(index=False))
         print("\nvendor checkout (mock) charges:")
         print(pd.DataFrame(orders.checkout_payments()).to_string(index=False))
+    elif a.cmd == "pack":
+        draft_pack.approve(a.name)
+        print(f"pack {a.name} approved (still marked draft / low confidence). Re-run the request.")
     elif a.cmd == "rfq":
         if a.args[:1] == ["reply"]:
             t = rfq.vendor_reply(a.args[1], " ".join(a.args[2:]))

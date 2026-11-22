@@ -94,6 +94,35 @@ v0 runs the whole BOM end to end: steps 1–2 are real, 3, 4 and 6 are stubs, an
 
 ---
 
+## 2026-11-22 · Agents inside the workflow (Sid)
+
+**Architecture:** the pipeline is still a fixed workflow, so it's repeatable and auditable. Bounded tool-calling agents sit inside it only where the path isn't known in advance. All of them run on one loop, `desk/agent.py`:
+- Gemini function calling, temperature 0.
+- `max_turns`, with a forced `finish` on the last turn.
+- A Crustdata credit budget: paid tools refuse once it's spent.
+- A typed report as the only way to finish.
+- Every turn is cached by the conversation so far (re-runs replay for free), and the transcript is saved in `runs/`.
+
+Agents gather facts and draft; code decides.
+
+| Agent | Where | Tools | Output → what code does with it |
+|---|---|---|---|
+| seller investigator | step 2b, open-search leads | fetch_page, read_product_page (one structured Gemini call), identify_company, enrich_company, web_search | report → quote whose prices come from the page read; red flags become quote flags (founder review) |
+| RFQ agent | step 3b, sellers with no price | send_email (mock mailbox, one follow-up max) | quote → code checks every number appears in the vendor's email; advance-payment terms get flagged |
+| pack drafter | step 1b, a field with no pack | web_search, fetch_page, company_search | pack YAML → `packs/drafts/`, used only after the founder approves; low confidence |
+
+**What we saw**
+
+- **Investigator:** eBay listings are blocked; the agent searched twice, then reported a marketplace with red flags. The Amazon India lead was a different variant (`-1U-`, external antenna) at ₹7,237 vs ₹312: flagged mismatch. Robu.in had `TYPE-C-31-M-35`, not `-M-12`, so it's a substitute candidate. Leads cost 0–6 credits and 2–8 turns each.
+- **`amazon.in` resolves to an unrelated company** in Tamil Nadu in Crustdata: the same storefront-vs-company problem as `digikey.in`.
+- **Pack drafter**, on the leather request: 3 turns, 1.2 credits. It tested its own Company Search query, which found 5 makers in Kanpur. It drafted RFQ questions (leather grade, debossing, samples, packaging), ordering by RFQ, and trust signals.
+- **Company Search wants ISO-3 country codes** (`IND`). The drafter wrote "India", so code normalises it. Asking for `headcount` in search costs 0.2 credits extra per result, so we enrich only the shortlisted makers.
+- **Checks have to come before RFQs.** The first try sent RFQs to the first three makers found, including one founded in 2024 (score 0.43). Now it's best score first, and never a REJECTED seller.
+- **RFQ agent:** it followed up only for what was missing and recorded the quote with the vendor's exact words. NDA/advance → escalated. But on "50% advance with the PO" it followed up instead of escalating, so advance terms are now flagged by code, not left to the prompt.
+- **Leather end to end:** drafted pack → approved → 5 makers found and checked → RFQs to the top 3 → a teammate replied as Arctic International (₹1,150/pc, pay on delivery) → picked, landed ₹4.09 lakh → order held above the ₹50k approval limit.
+
+---
+
 ## Later (not now)
 
 - When data is missing or blocked, pay third-party data services for it.

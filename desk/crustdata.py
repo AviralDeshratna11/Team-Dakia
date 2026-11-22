@@ -113,6 +113,16 @@ class Crustdata:
             resp = m[0].get("company_data") if m else None
         return resp
 
+    def company_search(self, query: str, filters: dict | None = None, limit: int = 10) -> list[dict]:
+        """Ranked company search in plain words (+ optional filters). 0.03 credits per result."""
+        body = {"search": {"query": query, "mode": "hybrid"}, "limit": limit,
+                "fields": ["crustdata_company_id", "basic_info", "locations"]}  # headcount costs 0.2 extra per result
+        if filters:
+            body["filters"] = filters
+        entry = self._cached_or_call(cache_key("company_search", body), "/company/search", body,
+                                     label=f"company_search: {query}")
+        return (entry["response"] or {}).get("companies", [])
+
     def credits_left(self) -> dict:
         r = httpx.get(f"{BASE}/account/credits", headers=self._headers(), timeout=30)
         r.raise_for_status()
