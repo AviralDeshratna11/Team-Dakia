@@ -61,6 +61,8 @@ class SourcingRequest(Contract):
     mode: Literal["fixture", "live"] = "fixture"
     llm_enabled: bool = False
     supplier_domains: list[str] = Field(default_factory=list, max_length=3)
+    # Crustdata credits this run may spend on live supplier checks; the founder can lower it mid-run.
+    credit_budget: float = Field(default=25, ge=0, le=1000)
     scenario: Literal["normal", "missing_stock", "provider_timeout", "checkout_timeout", "checkout_crash"] = "normal"
 
     @model_validator(mode="after")
@@ -96,6 +98,9 @@ class Supplier(Contract):
     locations: list[str]
     kind: Literal["manufacturer", "distributor", "trader", "unknown"]
     identity: Literal["resolved", "unverified"]
+    # Trust-card facts computed from live company data (empty for fixtures).
+    profile: dict[str, Any] = Field(default_factory=dict)
+    contact: dict[str, str] | None = None
 
 
 class SupplierCheck(Contract):
@@ -175,6 +180,7 @@ class ResearchPurchase(Contract):
     provider: str = "mock_paid_data"
     question: str
     quoted_minor: int
+    quoted_credits: str | None = None
     rationale: str
     status: Literal["quoted", "reserved", "paid", "skipped", "released"]
     evidence_ids: list[str] = Field(default_factory=list)
@@ -219,6 +225,7 @@ class Order(Contract):
 class RFQDraft(Contract):
     id: str
     supplier_id: str
+    recipient: str | None = None
     subject: str
     body: str
     status: Literal["draft"] = "draft"
@@ -277,6 +284,17 @@ class CategoryPack(Contract):
     fx_to_inr: dict[str, str]
     research_cost_minor: int = Field(gt=0)
     research_max_order_bps: int = Field(gt=0)
+    # Live discovery: "web_search" (catalogue pages) or "company_search" (company graph first).
+    live_discovery: Literal["web_search", "company_search"] = "web_search"
+    search_query: str = ""
+    max_candidates: int = Field(default=8, ge=1, le=25)
+    enrich_fields: list[str] = Field(default_factory=lambda: ["basic_info", "headcount", "locations", "taxonomy", "people", "news", "revenue"])
+    relevance_keywords: list[str] = Field(default_factory=list)
+    relevance_naics: list[str] = Field(default_factory=list)
+    production_job_terms: list[str] = Field(default_factory=list)
+    # A signal proven False here rejects the supplier outright (a red flag is not offset by points elsewhere).
+    hard_fail_signals: list[str] = Field(default_factory=list)
+    sales_job_terms: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def weights_sum(self):

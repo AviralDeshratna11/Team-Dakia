@@ -256,7 +256,9 @@ export interface components {
         /** BudgetUpdate */
         BudgetUpdate: {
             /** Research Budget Minor */
-            research_budget_minor: number;
+            research_budget_minor?: number | null;
+            /** Credit Budget */
+            credit_budget?: number | null;
         };
         /** Candidate */
         Candidate: {
@@ -500,6 +502,8 @@ export interface components {
             id: string;
             /** Supplier Id */
             supplier_id: string;
+            /** Recipient */
+            recipient: string | null;
             /** Subject */
             subject: string;
             /** Body */
@@ -526,6 +530,8 @@ export interface components {
             question: string;
             /** Quoted Minor */
             quoted_minor: number;
+            /** Quoted Credits */
+            quoted_credits: string | null;
             /** Rationale */
             rationale: string;
             /**
@@ -606,6 +612,11 @@ export interface components {
             /** Supplier Domains */
             supplier_domains?: string[];
             /**
+             * Credit Budget
+             * @default 25
+             */
+            credit_budget: number;
+            /**
              * Scenario
              * @default normal
              * @enum {string}
@@ -674,6 +685,11 @@ export interface components {
             llm_enabled: boolean;
             /** Supplier Domains */
             supplier_domains: string[];
+            /**
+             * Credit Budget
+             * @default 25
+             */
+            credit_budget: number;
             /**
              * Scenario
              * @default normal
@@ -763,6 +779,14 @@ export interface components {
              * @enum {string}
              */
             identity: "resolved" | "unverified";
+            /** Profile */
+            profile: {
+                [key: string]: unknown;
+            };
+            /** Contact */
+            contact: {
+                [key: string]: string;
+            } | null;
         };
         /** SupplierCheck */
         SupplierCheck: {
@@ -788,6 +812,10 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+            /** Input */
+            input?: unknown;
+            /** Context */
+            ctx?: Record<string, never>;
         };
         /** WorkflowEvent */
         WorkflowEvent: {

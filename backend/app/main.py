@@ -14,7 +14,8 @@ from app.workflow.orchestrator import approve, fingerprint
 
 
 class BudgetUpdate(Contract):
-    research_budget_minor: int = Field(ge=0)
+    research_budget_minor: int | None = Field(default=None, ge=0)
+    credit_budget: float | None = Field(default=None, ge=0, le=1000)
 
 
 class ClarificationAnswer(Contract):
@@ -45,7 +46,7 @@ def create_app(database: Database | None = None):
 
     @app.get("/api/health")
     def health():
-        return {"status": "ok", "payments": "mock", "live_integrations": "Crustdata requires worker key; Gemini parsing/extraction opt-in via llm_enabled and GEMINI_API_KEY", "worker": "separate process required"}
+        return {"status": "ok", "payments": "mock", "live_integrations": "Crustdata (company search, enrich, job counts, news) requires worker key; Gemini parsing/extraction opt-in via llm_enabled and GEMINI_API_KEY", "worker": "separate process required"}
 
     @app.post("/api/runs", response_model=WorkflowRun, status_code=201)
     def create(body: SourcingRequest, request: Request):
@@ -94,8 +95,14 @@ def create_app(database: Database | None = None):
     def budget(run_id: str, body: BudgetUpdate, request: Request):
         with request.app.state.db.transaction() as c:
             run = get_run(c, run_id)
-            run.request.research_budget_minor = body.research_budget_minor
-            run.events.append(WorkflowEvent(state=run.state, message=f"Research ceiling updated to {body.research_budget_minor} paise; committed spend remains visible."))
+            if body.research_budget_minor is None and body.credit_budget is None:
+                raise ValueError("send research_budget_minor, credit_budget or both")
+            if body.research_budget_minor is not None:
+                run.request.research_budget_minor = body.research_budget_minor
+                run.events.append(WorkflowEvent(state=run.state, message=f"Research ceiling updated to {body.research_budget_minor} paise; committed spend remains visible."))
+            if body.credit_budget is not None:
+                run.request.credit_budget = body.credit_budget
+                run.events.append(WorkflowEvent(state=run.state, message=f"Crustdata credit ceiling set to {body.credit_budget:g}; credits already spent stay on the ledger and no new call may exceed it."))
             save_run(c, run)
         return run
 

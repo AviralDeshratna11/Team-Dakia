@@ -628,16 +628,33 @@
       "BudgetUpdate": {
         "properties": {
           "research_budget_minor": {
-            "type": "integer",
-            "minimum": 0.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Research Budget Minor"
+          },
+          "credit_budget": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credit Budget"
           }
         },
         "additionalProperties": false,
         "type": "object",
-        "required": [
-          "research_budget_minor"
-        ],
         "title": "BudgetUpdate"
       },
       "Candidate": {
@@ -1280,6 +1297,17 @@
             "type": "string",
             "title": "Supplier Id"
           },
+          "recipient": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recipient"
+          },
           "subject": {
             "type": "string",
             "title": "Subject"
@@ -1300,6 +1328,7 @@
         "required": [
           "id",
           "supplier_id",
+          "recipient",
           "subject",
           "body",
           "status"
@@ -1328,6 +1357,17 @@
           "quoted_minor": {
             "type": "integer",
             "title": "Quoted Minor"
+          },
+          "quoted_credits": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quoted Credits"
           },
           "rationale": {
             "type": "string",
@@ -1371,6 +1411,7 @@
           "provider",
           "question",
           "quoted_minor",
+          "quoted_credits",
           "rationale",
           "status",
           "evidence_ids",
@@ -1487,6 +1528,13 @@
             "maxItems": 3,
             "title": "Supplier Domains"
           },
+          "credit_budget": {
+            "type": "number",
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Credit Budget",
+            "default": 25
+          },
           "scenario": {
             "type": "string",
             "enum": [
@@ -1599,6 +1647,13 @@
             "maxItems": 3,
             "title": "Supplier Domains"
           },
+          "credit_budget": {
+            "type": "number",
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Credit Budget",
+            "default": 25
+          },
           "scenario": {
             "type": "string",
             "enum": [
@@ -1628,6 +1683,7 @@
           "mode",
           "llm_enabled",
           "supplier_domains",
+          "credit_budget",
           "scenario"
         ],
         "title": "SourcingRequest"
@@ -1840,6 +1896,25 @@
               "unverified"
             ],
             "title": "Identity"
+          },
+          "profile": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Profile"
+          },
+          "contact": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contact"
           }
         },
         "additionalProperties": false,
@@ -1852,7 +1927,9 @@
           "domain",
           "locations",
           "kind",
-          "identity"
+          "identity",
+          "profile",
+          "contact"
         ],
         "title": "Supplier"
       },
@@ -1922,6 +1999,13 @@
           "type": {
             "type": "string",
             "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
           }
         },
         "type": "object",
