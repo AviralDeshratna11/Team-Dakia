@@ -123,6 +123,23 @@ Agents gather facts and draft; code decides.
 
 ---
 
+## 2026-11-22 · Payments, leather follow-ups, DigiKey misses, shipping, tests (Sid)
+
+- **Mock payments, shaped like a real gateway** (`desk/payments.py`):
+  - A `PaymentProvider` interface, with a mock gateway behind it: idempotent intents (same key + different amount → refused), confirm/retry/refund, and an event log standing in for webhooks.
+  - An `AgentWallet`: balance, per-payment limit, payee blocklist, ledger.
+  - Orders pay by card (checkouts) or bank transfer (RFQ vendors). A declined payment goes back to APPROVED with the reason and retries the same intent next run.
+  - Tested: limit ₹1L → the ₹2.05L order was declined; limit raised → the same intent succeeded.
+  - A `RazorpayProvider` placeholder documents the mapping to a real provider.
+- **Factory vs trader** (Job Search + Person Search titles) for made-to-order packs. Small Kanpur makers have **no job postings and almost no staff records** in Crustdata, so the signal is "couldn't check": leather picks now go to the founder rather than auto-pick. For small makers, a factory video call or visit may be the only real check.
+- **Person Search returns namesakes:** a KLODENNEX "employee" was a food & beverage director in Albania. Staff outside the company's HQ country are dropped. The best sales/owner contact now addresses the RFQ (emails need separate enrichment: not done).
+- **DigiKey no-match pages:** `productCount: 0` → NOT_FOUND, and DigiKey's "did you mean" becomes a substitute (CL21A106KAQNNNE → CL21A106K**O**QNNNE). Matches only in other categories → NO_MATCH (e.g. the ESP32 module appears only inside dev boards).
+- **Mouser isn't always blocked:** one fetch went through (no extractor yet → GAP).
+- **Shipping combined per vendor:** three LCSC lines share one ₹2,200 fee, saving ~₹5,700. Per-line picks aren't re-chosen after combining (a known simplification).
+- **Hard cases as tests:** `uv run pytest -q` → 14 passed, 1 skipped (case 6, data budget: step 4 deferred), 0.2s, offline.
+
+---
+
 ## Later (not now)
 
 - When data is missing or blocked, pay third-party data services for it.

@@ -9,6 +9,9 @@ Work in progress (ContextCon 05, BITS Pilani). The full README comes before subm
 ```bash
 uv sync
 echo "CRUSTDATA_API_KEY=..." > .env
+# Gemini on Vertex AI (steps 1, 1b, 2b, 3b): a service-account key kept OUTSIDE the repo
+echo "GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json" >> .env
+echo "GOOGLE_CLOUD_PROJECT=your-project" >> .env
 
 uv run python -m desk run examples/electronics_bom.yaml   # whole pipeline (asks if anything is unclear)
 uv run python -m desk show                                # last run, step by step
@@ -18,6 +21,8 @@ uv run python -m desk run <request> --crash-after-charge  # crash mid-payment; r
 uv run python -m desk rfq                                 # RFQ threads; `rfq <id>` shows the emails
 uv run python -m desk rfq reply <id> "..."                # reply as the vendor (a teammate)
 uv run python -m desk pack approve <name>                 # approve a pack an agent drafted for a new field
+uv run python -m desk wallet [fund <inr> | limit <inr>]   # the agent's wallet: balance, limit, ledger, events
+uv run pytest -q                                          # the brief's hard cases (offline, no keys needed)
 ```
 
 Examples: `examples/electronics_bom.yaml` (the brief's BOM, in the founder's words),
@@ -37,7 +42,20 @@ path isn't known in advance. Agents gather facts and draft; plain code decides.
    3b. **RFQ** sellers with no price (agent, mock mailbox).
 4. Buy data: not built yet.
 5. **Decide**: rules in order, then lowest landed cost. Flagged options go to the founder, never picked silently.
-6. **Order**: saved states, idempotency keys, approval limit, mock checkout; never pays twice.
+5b. **Combine shipping** per vendor across the lines picked from it.
+6. **Order**: saved states, idempotency keys, approval limit; never pays twice.
+
+**Payments (mocked, real-gateway shaped)** in `desk/payments.py`: a `PaymentProvider` interface; a mock gateway
+with idempotent payment intents, retries, refunds and an event log (the webhooks); an agent wallet with a balance,
+a per-payment limit and a ledger. A real provider (e.g. Razorpay) is one class implementing the same interface.
+
+## Tests
+
+`tests/test_hard_cases.py` runs the brief's ten hard cases offline (fake Crustdata, fake Gemini, temp
+databases): clean pick cited and paid once; storefront with no company record rejected; two storefronts,
+one company; trader caught by its hiring; missing stock never picked; wallet ceiling cut mid-run; 429 retried
+and an unrunnable check never picked; crash after charge paid once; vague spec asks once; leather on the same
+engine. Case 6 (a data budget cut) is skipped: buying data is deferred.
 
 To step through it yourself, open `notebooks/walkthrough.ipynb` in VS Code and pick the `.venv` kernel.
 
@@ -57,6 +75,8 @@ Every step's input, output, API calls and timing are saved to `runs/<run_id>/<st
 | `desk/investigate.py` | Agent: investigate unknown sellers |
 | `desk/rfq.py` | Agent: RFQ email threads (mock mailbox) |
 | `desk/draft_pack.py` | Agent: draft a category pack for a new field |
+| `desk/payments.py` | Mock payment provider + agent wallet (real-gateway shaped) |
+| `tests/` | The hard cases, offline |
 | `desk/pipeline.py` | Runs the steps in order and records each one |
 | `desk/crustdata.py` | Crustdata client: retry, backoff, disk cache |
 | `desk/extract.py` | Reads price, stock and MOQ from fetched pages |
